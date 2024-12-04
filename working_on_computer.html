@@ -8,7 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
     <style>
-        /* Previous styles remain the same */
+        /* Previous styles remain the same with mobile adaptations */
         body {
             font-family: system-ui, -apple-system, sans-serif;
             max-width: 800px;
@@ -31,7 +31,6 @@
             width: 100%;
             height: auto;
             aspect-ratio: 4/3;
-            transform: scaleX(-1); /* Mirror the video */
         }
         
         #videoPreview {
@@ -44,7 +43,17 @@
         }
         
         .controls-container {
-            margin-top: calc(75% + 1rem);
+            margin-top: calc(75% + 1rem); /* Adjust based on video aspect ratio */
+        }
+
+        .camera-select {
+            margin: 1rem 0;
+            padding: 0.5rem;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            background: white;
+            width: 100%;
+            max-width: 300px;
         }
         
         .button-container {
@@ -85,7 +94,6 @@
         #switchCamera {
             background: #9c27b0;
             color: white;
-            margin-bottom: 1rem;
         }
         
         button:hover {
@@ -123,7 +131,10 @@
     </div>
     
     <div class="controls-container">
-        <button id="switchCamera">Switch Camera</button>
+        <select id="cameraSelect" class="camera-select">
+            <option value="">Loading cameras...</option>
+        </select>
+        
         <div class="button-container">
             <button id="startButton">Start Recording</button>
             <button id="stopButton">Stop Recording</button>
@@ -137,15 +148,15 @@
         let recordedChunks = [];
         let isRecording = false;
         let currentStream = null;
-        let isFrontCamera = true;
+        let currentCamera = null;
         
         const videoPreview = document.getElementById('videoPreview');
         const handCanvas = document.getElementById('handCanvas');
+        const cameraSelect = document.getElementById('cameraSelect');
         const canvasCtx = handCanvas.getContext('2d');
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const downloadButton = document.getElementById('downloadButton');
-        const switchCamera = document.getElementById('switchCamera');
         const recordingStatus = document.getElementById('recordingStatus');
 
         // Initialize MediaPipe Hands
@@ -164,8 +175,6 @@
         function onResultsHands(results) {
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
-            canvasCtx.scale(-1, 1); // Mirror the canvas drawing
-            canvasCtx.translate(-handCanvas.width, 0);
 
             if (results.multiHandLandmarks && results.multiHandedness) {
                 for (let index = 0; index < results.multiHandLandmarks.length; index++) {
@@ -188,7 +197,38 @@
 
         hands.onResults(onResultsHands);
 
-        async function setupCamera(useFrontCamera = true) {
+        // Get available cameras and populate select
+        async function getCameras() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                cameraSelect.innerHTML = videoDevices.map(device => 
+                    `<option value="${device.deviceId}">${device.label || `Camera ${videoDevices.indexOf(device) + 1}`}</option>`
+                ).join('');
+                
+                if (videoDevices.length > 0) {
+                    currentCamera = videoDevices[0].deviceId;
+                    setupCamera(currentCamera);
+                }
+            } catch (error) {
+                console.error('Error getting cameras:', error);
+                cameraSelect.innerHTML = '<option value="">No cameras found</option>';
+            }
+        }
+
+        // Handle camera selection change
+        cameraSelect.addEventListener('change', (event) => {
+            if (isRecording) {
+                alert('Please stop recording before switching cameras');
+                cameraSelect.value = currentCamera;
+                return;
+            }
+            currentCamera = event.target.value;
+            setupCamera(currentCamera);
+        });
+
+        async function setupCamera(deviceId) {
             try {
                 // Stop any existing stream
                 if (currentStream) {
@@ -197,9 +237,10 @@
 
                 const constraints = {
                     video: {
-                        width: { ideal: 640 },
-                        height: { ideal: 480 },
-                        facingMode: useFrontCamera ? "user" : "environment"
+                        deviceId: deviceId ? {exact: deviceId} : undefined,
+                        width: {ideal: 640},
+                        height: {ideal: 480},
+                        facingMode: deviceId ? undefined : "environment"
                     },
                     audio: true
                 };
@@ -210,6 +251,7 @@
                 // Wait for video to be ready
                 await new Promise((resolve) => {
                     videoPreview.onloadedmetadata = () => {
+                        // Set canvas size to match video
                         handCanvas.width = videoPreview.videoWidth;
                         handCanvas.height = videoPreview.videoHeight;
                         resolve();
@@ -224,7 +266,7 @@
                     height: handCanvas.height
                 });
                 
-                await camera.start();
+                camera.start();
                 
             } catch (error) {
                 console.error('Error accessing camera:', error);
@@ -232,17 +274,7 @@
             }
         }
 
-        // Switch camera function
-        switchCamera.addEventListener('click', async () => {
-            if (isRecording) {
-                alert('Please stop recording before switching cameras');
-                return;
-            }
-            isFrontCamera = !isFrontCamera;
-            await setupCamera(isFrontCamera);
-        });
-
-        // Recording functions remain mostly the same
+        // Recording functions remain the same
         function startRecording() {
             if (isRecording) return;
             
@@ -253,11 +285,7 @@
             
             function drawFrame() {
                 if (!isRecording) return;
-                ctx.save();
-                ctx.scale(-1, 1);
-                ctx.translate(-canvas.width, 0);
                 ctx.drawImage(videoPreview, 0, 0);
-                ctx.restore();
                 ctx.drawImage(handCanvas, 0, 0);
                 requestAnimationFrame(drawFrame);
             }
@@ -285,7 +313,7 @@
                 stopButton.style.display = 'none';
                 downloadButton.style.display = 'block';
                 recordingStatus.style.display = 'none';
-                switchCamera.disabled = false;
+                cameraSelect.disabled = false;
             };
 
             isRecording = true;
@@ -296,7 +324,7 @@
             stopButton.style.display = 'block';
             downloadButton.style.display = 'none';
             recordingStatus.style.display = 'block';
-            switchCamera.disabled = true;
+            cameraSelect.disabled = true;
         }
 
         function stopRecording() {
@@ -329,8 +357,8 @@
         stopButton.addEventListener('click', stopRecording);
         downloadButton.addEventListener('click', downloadRecording);
 
-        // Initialize with front camera
-        setupCamera(true);
+        // Initialize
+        getCameras();
     </script>
 </body>
 </html>
