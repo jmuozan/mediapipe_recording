@@ -106,8 +106,7 @@
     <script>
         let mediaRecorder = null;
         let recordedChunks = [];
-        let recordingStream = null;
-        let animationFrameId = null;
+        let isRecording = false;
         
         const videoPreview = document.getElementById('videoPreview');
         const handCanvas = document.getElementById('handCanvas');
@@ -140,15 +139,13 @@
                     const isRightHand = classification.label === 'Right';
                     const landmarks = results.multiHandLandmarks[index];
                     
-                    // Draw connections
                     drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
                         {color: isRightHand ? '#00FF00' : '#FF0000'});
                     
-                    // Draw landmarks with fixed radius to avoid negative values
                     drawLandmarks(canvasCtx, landmarks, {
                         color: isRightHand ? '#00FF00' : '#FF0000',
                         fillColor: isRightHand ? '#FF0000' : '#00FF00',
-                        radius: 5  // Fixed radius instead of calculation
+                        radius: 5
                     });
                 }
             }
@@ -182,32 +179,30 @@
             }
         }
 
+        // Simplified recording functions
         function startRecording() {
-            if (mediaRecorder) return;
-
+            if (isRecording) return;
+            
             const canvas = document.createElement('canvas');
             canvas.width = 640;
             canvas.height = 480;
             const ctx = canvas.getContext('2d');
-
+            
             function drawFrame() {
+                if (!isRecording) return;
                 ctx.drawImage(videoPreview, 0, 0);
                 ctx.drawImage(handCanvas, 0, 0);
-                animationFrameId = requestAnimationFrame(drawFrame);
+                requestAnimationFrame(drawFrame);
             }
-
+            
             const stream = canvas.captureStream(30);
             const audioTrack = videoPreview.srcObject.getAudioTracks()[0];
             if (audioTrack) {
                 stream.addTrack(audioTrack);
             }
 
-            recordingStream = stream;
             recordedChunks = [];
-
-            mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'video/webm;codecs=vp8,opus'
-            });
+            mediaRecorder = new MediaRecorder(stream);
 
             mediaRecorder.ondataavailable = (e) => {
                 if (e.data.size > 0) {
@@ -216,23 +211,15 @@
             };
 
             mediaRecorder.onstop = () => {
-                if (animationFrameId) {
-                    cancelAnimationFrame(animationFrameId);
-                    animationFrameId = null;
-                }
-                
-                if (recordingStream) {
-                    recordingStream.getTracks().forEach(track => track.stop());
-                    recordingStream = null;
-                }
-
+                isRecording = false;
                 startButton.style.display = 'block';
                 stopButton.style.display = 'none';
                 downloadButton.style.display = 'block';
                 recordingStatus.style.display = 'none';
             };
 
-            mediaRecorder.start(1000);
+            isRecording = true;
+            mediaRecorder.start();
             drawFrame();
 
             startButton.style.display = 'none';
@@ -242,22 +229,10 @@
         }
 
         function stopRecording() {
-            if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
-
-            // Stop the MediaRecorder
-            mediaRecorder.stop();
-            mediaRecorder = null;
-
-            // Cancel animation frame if it exists
-            if (animationFrameId) {
-                cancelAnimationFrame(animationFrameId);
-                animationFrameId = null;
-            }
-
-            // Stop all tracks in the recording stream
-            if (recordingStream) {
-                recordingStream.getTracks().forEach(track => track.stop());
-                recordingStream = null;
+            if (mediaRecorder && isRecording) {
+                isRecording = false;
+                mediaRecorder.stop();
+                mediaRecorder = null;
             }
         }
 
@@ -278,10 +253,12 @@
             URL.revokeObjectURL(url);
         }
 
+        // Event listeners
         startButton.addEventListener('click', startRecording);
         stopButton.addEventListener('click', stopRecording);
         downloadButton.addEventListener('click', downloadRecording);
 
+        // Initialize
         setupCamera();
     </script>
 </body>
