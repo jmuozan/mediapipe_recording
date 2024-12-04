@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Video Recorder with Hand Tracking</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.1/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils@0.1/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            text-align: center;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            margin: 0 auto;
+        }
+        
+        #videoPreview, #handCanvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 640px;
+            height: 480px;
+        }
+        
+        #videoPreview {
+            background: #f0f0f0;
+            z-index: 1;
+        }
+        
+        #handCanvas {
+            z-index: 2;
+        }
+        
+        .button-container {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin: 1rem 0;
+        }
+        
+        button {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.2s;
+        }
+        
+        #startButton {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        #stopButton {
+            background: #f44336;
+            color: white;
+            display: none;
+        }
+        
+        #downloadButton {
+            background: #2196F3;
+            color: white;
+            display: none;
+        }
+        
+        button:hover {
+            opacity: 0.9;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        #recordingStatus {
+            color: red;
+            display: none;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>Video Recorder with Hand Tracking</h1>
+    <div class="video-container">
+        <video id="videoPreview" autoplay muted></video>
+        <canvas id="handCanvas" width="640" height="480"></canvas>
+    </div>
+    
+    <div class="button-container">
+        <button id="startButton">Start Recording</button>
+        <button id="stopButton">Stop Recording</button>
+        <button id="downloadButton">Download Recording</button>
+    </div>
+    <div id="recordingStatus">● Recording</div>
+
+    <script>
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let recordingCanvas = null;
+        let recordingCtx = null;
+        let animationFrameId = null;
+        let isRecording = false;
+        
+        const videoPreview = document.getElementById('videoPreview');
+        const handCanvas = document.getElementById('handCanvas');
+        const canvasCtx = handCanvas.getContext('2d');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const downloadButton = document.getElementById('downloadButton');
+        const recordingStatus = document.getElementById('recordingStatus');
+        
+        // Initialize MediaPipe Hands
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 4,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResultsHands);
+
+        function onResultsHands(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                for (let index = 0; index < results.multiHandLandmarks.length; index++) {
+                    const classification = results.multiHandedness[index];
+                    const isRightHand = classification.label === 'Right';
+                    const landmarks = results.multiHandLandmarks[index];
+                    drawConnectors(
+                        canvasCtx, landmarks, HAND_CONNECTIONS,
+                        {color: isRightHand ? '#00FF00' : '#FF0000'}
+                    );
+                    drawLandmarks(canvasCtx, landmarks, {
+                        color: isRightHand ? '#00FF00' : '#FF0000',
+                        fillColor: isRightHand ? '#FF0000' : '#00FF00',
+                        radius: (x) => {
+                            return lerp(x.from.z, -0.15, .1, 10, 1);
+                        }
+                    });
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        async function setupCamera() {
+            try {
+                const constraints = {
+                    video: {
+                        width: 640,
+                        height: 480
+                    },
+                    audio: true
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                videoPreview.srcObject = stream;
+                
+                const camera = new Camera(videoPreview, {
+                    onFrame: async () => {
+                        await hands.send({image: videoPreview});
+                    },
+                    width: 640,
+                    height: 480
+                });
+                camera.start();
+                
+            } catch (error) {
+                console.error('Error accessing camera:', error);
+                alert('Unable to access camera. Please make sure you have granted permission.');
+            }
+        }
+
+        function startRecording() {
+            if (isRecording) return;
+            
+            recordingCanvas = document.createElement('canvas');
+            recordingCanvas.width = 640;
+            recordingCanvas.height = 480;
+            recordingCtx = recordingCanvas.getContext('2d');
+            
+            recordedChunks = [];
+            
+            const canvasStream = recordingCanvas.captureStream(30);
+            const audioTracks = videoPreview.srcObject.getAudioTracks();
+            if (audioTracks.length > 0) {
+                canvasStream.addTrack(audioTracks[0]);
+            }
+
+            const options = { mimeType: 'video/webm;codecs=vp8,opus' };
+            
+            try {
+                mediaRecorder = new MediaRecorder(canvasStream, options);
+            } catch (error) {
+                console.error('MediaRecorder error:', error);
+                alert('Error starting recording. Please try again.');
+                return;
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                isRecording = false;
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+                startButton.style.display = 'block';
+                stopButton.style.display = 'none';
+                downloadButton.style.display = 'block';
+                recordingStatus.style.display = 'none';
+            };
+
+            function drawFrame() {
+                if (!isRecording) return;
+                recordingCtx.drawImage(videoPreview, 0, 0);
+                recordingCtx.drawImage(handCanvas, 0, 0);
+                animationFrameId = requestAnimationFrame(drawFrame);
+            }
+
+            mediaRecorder.start(1000);
+            isRecording = true;
+            drawFrame();
+
+            startButton.style.display = 'none';
+            stopButton.style.display = 'block';
+            downloadButton.style.display = 'none';
+            recordingStatus.style.display = 'block';
+        }
+
+        function stopRecording() {
+            if (!isRecording || !mediaRecorder) return;
+            
+            try {
+                isRecording = false;
+                mediaRecorder.stop();
+                mediaRecorder = null;
+                
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+            } catch (error) {
+                console.error('Error stopping recording:', error);
+                // Reset UI state even if there's an error
+                startButton.style.display = 'block';
+                stopButton.style.display = 'none';
+                recordingStatus.style.display = 'none';
+            }
+        }
+
+        function downloadRecording() {
+            if (recordedChunks.length === 0) {
+                alert('No recording available to download');
+                return;
+            }
+
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'hand-tracking-recording.webm';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+        downloadButton.addEventListener('click', downloadRecording);
+        
+        setupCamera();
+        
+        function lerp(v0, v1, t) {
+            return v0 * (1 - t) + v1 * t;
+        }
+    </script>
+</body>
+</html>
