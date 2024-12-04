@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html>
-<!-- Previous head section and styles remain the same until the script -->
 <head>
     <title>Hand Tracking Camera</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,8 +7,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils@0.1/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
+    <!-- Previous styles remain the same -->
     <style>
-        /* Previous styles remain the same */
+        /* Previous styles */
         body {
             margin: 0;
             padding: 0;
@@ -127,33 +127,22 @@
 
         hands.onResults(onResults);
 
-        // Get back camera
-        async function getBackCamera() {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const cameras = devices.filter(device => device.kind === 'videoinput');
-            // Usually, the back camera is the last one in the list
-            return cameras[cameras.length - 1].deviceId;
-        }
-
-        // Setup camera
+        // Setup camera with strict back camera constraint
         async function setupCamera() {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
 
+            const constraints = {
+                audio: true,
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                }
+            };
+
             try {
-                // First get the back camera ID
-                const backCameraId = await getBackCamera();
-
-                const constraints = {
-                    video: {
-                        width: 640,
-                        height: 480,
-                        deviceId: { exact: backCameraId }
-                    },
-                    audio: true
-                };
-
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
 
@@ -165,8 +154,24 @@
                     };
                 });
             } catch (err) {
-                console.error(err);
-                alert("Error accessing camera: " + err.message);
+                console.error('Camera error:', err);
+                // If first attempt fails, try with exact constraint
+                try {
+                    constraints.video.facingMode = { exact: 'environment' };
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    video.srcObject = stream;
+
+                    return new Promise((resolve) => {
+                        video.onloadedmetadata = () => {
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            resolve(video);
+                        };
+                    });
+                } catch (err2) {
+                    console.error('Both camera attempts failed:', err2);
+                    alert("Error accessing back camera: " + err2.message);
+                }
             }
         }
 
@@ -197,14 +202,12 @@
             const camera = new Camera(video, {
                 onFrame: async () => {
                     await hands.send({image: video});
-                },
-                width: 640,
-                height: 480
+                }
             });
             camera.start();
         }
 
-        // Recording functions remain the same
+        // Recording functions
         startRecordBtn.onclick = () => {
             if (!stream) return;
 
