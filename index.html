@@ -7,6 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
     <style>
+        /* Previous styles remain the same */
         body {
             font-family: system-ui, -apple-system, sans-serif;
             max-width: 800px;
@@ -105,10 +106,8 @@
     <script>
         let mediaRecorder = null;
         let recordedChunks = [];
-        let recordingCanvas = null;
-        let recordingCtx = null;
+        let recordingStream = null;
         let animationFrameId = null;
-        let isRecording = false;
         
         const videoPreview = document.getElementById('videoPreview');
         const handCanvas = document.getElementById('handCanvas');
@@ -131,8 +130,6 @@
             minTrackingConfidence: 0.5
         });
 
-        hands.onResults(onResultsHands);
-
         function onResultsHands(results) {
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
@@ -142,33 +139,31 @@
                     const classification = results.multiHandedness[index];
                     const isRightHand = classification.label === 'Right';
                     const landmarks = results.multiHandLandmarks[index];
-                    drawConnectors(
-                        canvasCtx, landmarks, HAND_CONNECTIONS,
-                        {color: isRightHand ? '#00FF00' : '#FF0000'}
-                    );
+                    
+                    // Draw connections
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
+                        {color: isRightHand ? '#00FF00' : '#FF0000'});
+                    
+                    // Draw landmarks with fixed radius to avoid negative values
                     drawLandmarks(canvasCtx, landmarks, {
                         color: isRightHand ? '#00FF00' : '#FF0000',
                         fillColor: isRightHand ? '#FF0000' : '#00FF00',
-                        radius: (x) => {
-                            return lerp(x.from.z, -0.15, .1, 10, 1);
-                        }
+                        radius: 5  // Fixed radius instead of calculation
                     });
                 }
             }
             canvasCtx.restore();
         }
 
+        hands.onResults(onResultsHands);
+
         async function setupCamera() {
             try {
-                const constraints = {
-                    video: {
-                        width: 640,
-                        height: 480
-                    },
-                    audio: true
-                };
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480 },
+                    audio: true 
+                });
                 
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 videoPreview.srcObject = stream;
                 
                 const camera = new Camera(videoPreview, {
@@ -178,6 +173,7 @@
                     width: 640,
                     height: 480
                 });
+                
                 camera.start();
                 
             } catch (error) {
@@ -187,58 +183,56 @@
         }
 
         function startRecording() {
-            if (isRecording) return;
-            
-            recordingCanvas = document.createElement('canvas');
-            recordingCanvas.width = 640;
-            recordingCanvas.height = 480;
-            recordingCtx = recordingCanvas.getContext('2d');
-            
+            if (mediaRecorder) return;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 640;
+            canvas.height = 480;
+            const ctx = canvas.getContext('2d');
+
+            function drawFrame() {
+                ctx.drawImage(videoPreview, 0, 0);
+                ctx.drawImage(handCanvas, 0, 0);
+                animationFrameId = requestAnimationFrame(drawFrame);
+            }
+
+            const stream = canvas.captureStream(30);
+            const audioTrack = videoPreview.srcObject.getAudioTracks()[0];
+            if (audioTrack) {
+                stream.addTrack(audioTrack);
+            }
+
+            recordingStream = stream;
             recordedChunks = [];
-            
-            const canvasStream = recordingCanvas.captureStream(30);
-            const audioTracks = videoPreview.srcObject.getAudioTracks();
-            if (audioTracks.length > 0) {
-                canvasStream.addTrack(audioTracks[0]);
-            }
 
-            const options = { mimeType: 'video/webm;codecs=vp8,opus' };
-            
-            try {
-                mediaRecorder = new MediaRecorder(canvasStream, options);
-            } catch (error) {
-                console.error('MediaRecorder error:', error);
-                alert('Error starting recording. Please try again.');
-                return;
-            }
+            mediaRecorder = new MediaRecorder(stream, {
+                mimeType: 'video/webm;codecs=vp8,opus'
+            });
 
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data && event.data.size > 0) {
-                    recordedChunks.push(event.data);
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    recordedChunks.push(e.data);
                 }
             };
 
             mediaRecorder.onstop = () => {
-                isRecording = false;
                 if (animationFrameId) {
                     cancelAnimationFrame(animationFrameId);
                     animationFrameId = null;
                 }
+                
+                if (recordingStream) {
+                    recordingStream.getTracks().forEach(track => track.stop());
+                    recordingStream = null;
+                }
+
                 startButton.style.display = 'block';
                 stopButton.style.display = 'none';
                 downloadButton.style.display = 'block';
                 recordingStatus.style.display = 'none';
             };
 
-            function drawFrame() {
-                if (!isRecording) return;
-                recordingCtx.drawImage(videoPreview, 0, 0);
-                recordingCtx.drawImage(handCanvas, 0, 0);
-                animationFrameId = requestAnimationFrame(drawFrame);
-            }
-
             mediaRecorder.start(1000);
-            isRecording = true;
             drawFrame();
 
             startButton.style.display = 'none';
@@ -248,29 +242,28 @@
         }
 
         function stopRecording() {
-            if (!isRecording || !mediaRecorder) return;
-            
-            try {
-                isRecording = false;
-                mediaRecorder.stop();
-                mediaRecorder = null;
-                
-                if (animationFrameId) {
-                    cancelAnimationFrame(animationFrameId);
-                    animationFrameId = null;
-                }
-            } catch (error) {
-                console.error('Error stopping recording:', error);
-                // Reset UI state even if there's an error
-                startButton.style.display = 'block';
-                stopButton.style.display = 'none';
-                recordingStatus.style.display = 'none';
+            if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+
+            // Stop the MediaRecorder
+            mediaRecorder.stop();
+            mediaRecorder = null;
+
+            // Cancel animation frame if it exists
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+
+            // Stop all tracks in the recording stream
+            if (recordingStream) {
+                recordingStream.getTracks().forEach(track => track.stop());
+                recordingStream = null;
             }
         }
 
         function downloadRecording() {
             if (recordedChunks.length === 0) {
-                alert('No recording available to download');
+                alert('No recording available');
                 return;
             }
 
@@ -288,12 +281,8 @@
         startButton.addEventListener('click', startRecording);
         stopButton.addEventListener('click', stopRecording);
         downloadButton.addEventListener('click', downloadRecording);
-        
+
         setupCamera();
-        
-        function lerp(v0, v1, t) {
-            return v0 * (1 - t) + v1 * t;
-        }
     </script>
 </body>
 </html>
