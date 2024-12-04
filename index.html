@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+<!-- Previous head section and styles remain the same... -->
 <head>
     <title>Hand Tracking Camera</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,9 +8,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils@0.1/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
-    <!-- Previous styles remain the same -->
     <style>
-        /* Previous styles */
+        /* Previous styles remain the same */
         body {
             margin: 0;
             padding: 0;
@@ -127,7 +127,7 @@
 
         hands.onResults(onResults);
 
-        // Setup camera with strict back camera constraint
+        // Setup camera
         async function setupCamera() {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
@@ -155,7 +155,6 @@
                 });
             } catch (err) {
                 console.error('Camera error:', err);
-                // If first attempt fails, try with exact constraint
                 try {
                     constraints.video.facingMode = { exact: 'environment' };
                     stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -182,14 +181,18 @@
 
             if (results.multiHandLandmarks) {
                 for (const landmarks of results.multiHandLandmarks) {
+                    // Draw connections with thicker lines
                     drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
                         color: '#00FF00',
-                        lineWidth: 1
+                        lineWidth: 4  // Increased from 1 to 4
                     });
+                    
+                    // Draw landmarks with larger radius and thicker outline
                     drawLandmarks(ctx, landmarks, {
-                        color: '#FF0000',
-                        lineWidth: 1,
-                        radius: 2,
+                        color: '#FF0000',        // Outline color
+                        fillColor: '#FFFFFF',    // Fill color
+                        lineWidth: 2,            // Outline thickness
+                        radius: 5                // Increased from 2 to 5
                     });
                 }
             }
@@ -207,7 +210,7 @@
             camera.start();
         }
 
-        // Recording functions
+        // Recording functions remain the same...
         startRecordBtn.onclick = () => {
             if (!stream) return;
 
@@ -246,7 +249,7 @@
             const blob = new Blob(recordedChunks, {
                 type: 'video/webm'
             });
-            const url = URL.createObjectURL(blob); 
+            const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             a.download = 'hand-tracking.webm';
