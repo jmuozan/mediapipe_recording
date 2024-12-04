@@ -2,24 +2,25 @@
 <html>
 <head>
     <title>Video Recorder with Hand Tracking</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.1/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils@0.1/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
     <style>
-        /* Previous styles remain the same */
+        /* Previous styles remain the same with mobile adaptations */
         body {
             font-family: system-ui, -apple-system, sans-serif;
             max-width: 800px;
-            margin: 2rem auto;
+            margin: 1rem auto;
             padding: 0 1rem;
             text-align: center;
         }
         
         .video-container {
             position: relative;
-            width: 640px;
-            height: 480px;
+            width: 100%;
+            max-width: 640px;
             margin: 0 auto;
         }
         
@@ -27,8 +28,9 @@
             position: absolute;
             left: 0;
             top: 0;
-            width: 640px;
-            height: 480px;
+            width: 100%;
+            height: auto;
+            aspect-ratio: 4/3;
         }
         
         #videoPreview {
@@ -40,11 +42,26 @@
             z-index: 2;
         }
         
+        .controls-container {
+            margin-top: calc(75% + 1rem); /* Adjust based on video aspect ratio */
+        }
+
+        .camera-select {
+            margin: 1rem 0;
+            padding: 0.5rem;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            background: white;
+            width: 100%;
+            max-width: 300px;
+        }
+        
         .button-container {
             display: flex;
             gap: 1rem;
             justify-content: center;
             margin: 1rem 0;
+            flex-wrap: wrap;
         }
         
         button {
@@ -54,6 +71,7 @@
             cursor: pointer;
             font-size: 1rem;
             transition: background-color 0.2s;
+            min-width: 120px;
         }
         
         #startButton {
@@ -73,6 +91,11 @@
             display: none;
         }
         
+        #switchCamera {
+            background: #9c27b0;
+            color: white;
+        }
+        
         button:hover {
             opacity: 0.9;
         }
@@ -87,35 +110,55 @@
             display: none;
             margin-top: 1rem;
         }
+
+        @media (max-width: 480px) {
+            .button-container {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+            
+            button {
+                width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
     <h1>Video Recorder with Hand Tracking</h1>
     <div class="video-container">
-        <video id="videoPreview" autoplay muted></video>
-        <canvas id="handCanvas" width="640" height="480"></canvas>
+        <video id="videoPreview" autoplay muted playsinline></video>
+        <canvas id="handCanvas"></canvas>
     </div>
     
-    <div class="button-container">
-        <button id="startButton">Start Recording</button>
-        <button id="stopButton">Stop Recording</button>
-        <button id="downloadButton">Download Recording</button>
+    <div class="controls-container">
+        <select id="cameraSelect" class="camera-select">
+            <option value="">Loading cameras...</option>
+        </select>
+        
+        <div class="button-container">
+            <button id="startButton">Start Recording</button>
+            <button id="stopButton">Stop Recording</button>
+            <button id="downloadButton">Download Recording</button>
+        </div>
+        <div id="recordingStatus">● Recording</div>
     </div>
-    <div id="recordingStatus">● Recording</div>
 
     <script>
         let mediaRecorder = null;
         let recordedChunks = [];
         let isRecording = false;
+        let currentStream = null;
+        let currentCamera = null;
         
         const videoPreview = document.getElementById('videoPreview');
         const handCanvas = document.getElementById('handCanvas');
+        const cameraSelect = document.getElementById('cameraSelect');
         const canvasCtx = handCanvas.getContext('2d');
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const downloadButton = document.getElementById('downloadButton');
         const recordingStatus = document.getElementById('recordingStatus');
-        
+
         // Initialize MediaPipe Hands
         const hands = new Hands({
             locateFile: (file) => {
@@ -154,21 +197,73 @@
 
         hands.onResults(onResultsHands);
 
-        async function setupCamera() {
+        // Get available cameras and populate select
+        async function getCameras() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 640, height: 480 },
-                    audio: true 
-                });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
                 
-                videoPreview.srcObject = stream;
+                cameraSelect.innerHTML = videoDevices.map(device => 
+                    `<option value="${device.deviceId}">${device.label || `Camera ${videoDevices.indexOf(device) + 1}`}</option>`
+                ).join('');
+                
+                if (videoDevices.length > 0) {
+                    currentCamera = videoDevices[0].deviceId;
+                    setupCamera(currentCamera);
+                }
+            } catch (error) {
+                console.error('Error getting cameras:', error);
+                cameraSelect.innerHTML = '<option value="">No cameras found</option>';
+            }
+        }
+
+        // Handle camera selection change
+        cameraSelect.addEventListener('change', (event) => {
+            if (isRecording) {
+                alert('Please stop recording before switching cameras');
+                cameraSelect.value = currentCamera;
+                return;
+            }
+            currentCamera = event.target.value;
+            setupCamera(currentCamera);
+        });
+
+        async function setupCamera(deviceId) {
+            try {
+                // Stop any existing stream
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                }
+
+                const constraints = {
+                    video: {
+                        deviceId: deviceId ? {exact: deviceId} : undefined,
+                        width: {ideal: 640},
+                        height: {ideal: 480},
+                        facingMode: deviceId ? undefined : "environment"
+                    },
+                    audio: true
+                };
+                
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+                videoPreview.srcObject = currentStream;
+                
+                // Wait for video to be ready
+                await new Promise((resolve) => {
+                    videoPreview.onloadedmetadata = () => {
+                        // Set canvas size to match video
+                        handCanvas.width = videoPreview.videoWidth;
+                        handCanvas.height = videoPreview.videoHeight;
+                        resolve();
+                    };
+                });
                 
                 const camera = new Camera(videoPreview, {
                     onFrame: async () => {
                         await hands.send({image: videoPreview});
                     },
-                    width: 640,
-                    height: 480
+                    width: handCanvas.width,
+                    height: handCanvas.height
                 });
                 
                 camera.start();
@@ -179,13 +274,13 @@
             }
         }
 
-        // Simplified recording functions
+        // Recording functions remain the same
         function startRecording() {
             if (isRecording) return;
             
             const canvas = document.createElement('canvas');
-            canvas.width = 640;
-            canvas.height = 480;
+            canvas.width = handCanvas.width;
+            canvas.height = handCanvas.height;
             const ctx = canvas.getContext('2d');
             
             function drawFrame() {
@@ -196,13 +291,15 @@
             }
             
             const stream = canvas.captureStream(30);
-            const audioTrack = videoPreview.srcObject.getAudioTracks()[0];
+            const audioTrack = currentStream.getAudioTracks()[0];
             if (audioTrack) {
                 stream.addTrack(audioTrack);
             }
 
             recordedChunks = [];
-            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder = new MediaRecorder(stream, {
+                mimeType: 'video/webm;codecs=vp8,opus'
+            });
 
             mediaRecorder.ondataavailable = (e) => {
                 if (e.data.size > 0) {
@@ -216,6 +313,7 @@
                 stopButton.style.display = 'none';
                 downloadButton.style.display = 'block';
                 recordingStatus.style.display = 'none';
+                cameraSelect.disabled = false;
             };
 
             isRecording = true;
@@ -226,6 +324,7 @@
             stopButton.style.display = 'block';
             downloadButton.style.display = 'none';
             recordingStatus.style.display = 'block';
+            cameraSelect.disabled = true;
         }
 
         function stopRecording() {
@@ -259,7 +358,7 @@
         downloadButton.addEventListener('click', downloadRecording);
 
         // Initialize
-        setupCamera();
+        getCameras();
     </script>
 </body>
 </html>
