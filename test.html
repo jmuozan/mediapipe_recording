@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html>
-<!-- Previous head section and styles remain the same until the script -->
 <head>
     <title>Hand Tracking Camera</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,7 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
     <style>
-        /* Previous styles remain the same */
         body {
             margin: 0;
             padding: 0;
@@ -127,33 +125,22 @@
 
         hands.onResults(onResults);
 
-        // Get back camera
-        async function getBackCamera() {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const cameras = devices.filter(device => device.kind === 'videoinput');
-            // Usually, the back camera is the last one in the list
-            return cameras[cameras.length - 1].deviceId;
-        }
-
         // Setup camera
         async function setupCamera() {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
 
+            const constraints = {
+                video: {
+                    width: 640,
+                    height: 480,
+                    facingMode: { exact: "environment" }
+                },
+                audio: true
+            };
+
             try {
-                // First get the back camera ID
-                const backCameraId = await getBackCamera();
-
-                const constraints = {
-                    video: {
-                        width: 640,
-                        height: 480,
-                        deviceId: { exact: backCameraId }
-                    },
-                    audio: true
-                };
-
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
 
@@ -204,7 +191,7 @@
             camera.start();
         }
 
-        // Recording functions remain the same
+        // Recording functions
         startRecordBtn.onclick = () => {
             if (!stream) return;
 
