@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+<!-- Previous head and style sections remain the same -->
 <head>
     <title>Video Recorder with Hand Tracking</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
     <style>
+        /* Previous styles remain the same */
         body {
             font-family: system-ui, -apple-system, sans-serif;
             max-width: 800px;
@@ -30,7 +32,6 @@
             width: 100%;
             height: auto;
             aspect-ratio: 4/3;
-            transform: scaleX(-1);
         }
         
         .front-camera #videoPreview, 
@@ -54,6 +55,7 @@
         
         .controls-container {
             margin-top: calc(75% + 1rem);
+            padding: 1rem;
         }
         
         .button-container {
@@ -139,11 +141,12 @@
     </div>
 
     <script>
+        // Previous variable declarations remain the same
         let mediaRecorder = null;
         let recordedChunks = [];
         let isRecording = false;
         let currentStream = null;
-        let isFrontCamera = false; // Start with back camera
+        let isFrontCamera = false;
         
         const videoPreview = document.getElementById('videoPreview');
         const handCanvas = document.getElementById('handCanvas');
@@ -154,7 +157,7 @@
         const switchCamera = document.getElementById('switchCamera');
         const recordingStatus = document.getElementById('recordingStatus');
 
-        // Initialize MediaPipe Hands
+        // Initialize MediaPipe Hands with adjusted settings
         const hands = new Hands({
             locateFile: (file) => {
                 return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/${file}`;
@@ -182,13 +185,19 @@
                     const isRightHand = classification.label === 'Right';
                     const landmarks = results.multiHandLandmarks[index];
                     
-                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
-                        {color: isRightHand ? '#00FF00' : '#FF0000'});
+                    // Adjusted connector and landmark sizes
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {
+                        color: isRightHand ? '#00FF00' : '#FF0000',
+                        lineWidth: 2 // Reduced line width
+                    });
                     
                     drawLandmarks(canvasCtx, landmarks, {
                         color: isRightHand ? '#00FF00' : '#FF0000',
                         fillColor: isRightHand ? '#FF0000' : '#00FF00',
-                        radius: 5
+                        lineWidth: 1, // Reduced line width
+                        radius: (x) => {
+                            return 2; // Fixed smaller radius
+                        }
                     });
                 }
             }
@@ -205,11 +214,15 @@
 
                 const constraints = {
                     video: {
-                        width: { ideal: 640 },
-                        height: { ideal: 480 },
+                        width: { ideal: 1280 }, // Increased resolution
+                        height: { ideal: 720 },
                         facingMode: useFrontCamera ? "user" : { exact: "environment" }
                     },
-                    audio: true
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        sampleRate: 44100
+                    }
                 };
                 
                 currentStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -245,57 +258,51 @@
             }
         }
 
-        switchCamera.addEventListener('click', async () => {
-            if (isRecording) {
-                alert('Please stop recording before switching cameras');
-                return;
-            }
-            isFrontCamera = !isFrontCamera;
-            await setupCamera(isFrontCamera);
-        });
-
+        // Improved recording functions
         function startRecording() {
             if (isRecording) return;
             
-            const canvas = document.createElement('canvas');
-            canvas.width = handCanvas.width;
-            canvas.height = handCanvas.height;
-            const ctx = canvas.getContext('2d');
-            
-            function drawFrame() {
-                if (!isRecording) return;
-                
-                // Draw video
-                if (isFrontCamera) {
-                    ctx.save();
-                    ctx.scale(-1, 1);
-                    ctx.translate(-canvas.width, 0);
-                    ctx.drawImage(videoPreview, 0, 0);
-                    ctx.restore();
-                } else {
-                    ctx.drawImage(videoPreview, 0, 0);
-                }
-                
-                // Draw hand tracking
-                ctx.drawImage(handCanvas, 0, 0);
-                
-                requestAnimationFrame(drawFrame);
-            }
-
             try {
+                const canvas = document.createElement('canvas');
+                canvas.width = handCanvas.width;
+                canvas.height = handCanvas.height;
+                const ctx = canvas.getContext('2d');
+                
+                function drawFrame() {
+                    if (!isRecording) return;
+                    
+                    // Draw video
+                    if (isFrontCamera) {
+                        ctx.save();
+                        ctx.scale(-1, 1);
+                        ctx.translate(-canvas.width, 0);
+                        ctx.drawImage(videoPreview, 0, 0);
+                        ctx.restore();
+                    } else {
+                        ctx.drawImage(videoPreview, 0, 0);
+                    }
+                    
+                    // Draw hand tracking overlay
+                    ctx.drawImage(handCanvas, 0, 0);
+                    
+                    requestAnimationFrame(drawFrame);
+                }
+
                 const stream = canvas.captureStream(30);
-                const audioTrack = currentStream.getAudioTracks()[0];
-                if (audioTrack) {
-                    stream.addTrack(audioTrack);
+                const audioTracks = currentStream.getAudioTracks();
+                if (audioTracks.length > 0) {
+                    stream.addTrack(audioTracks[0]);
                 }
 
                 recordedChunks = [];
                 mediaRecorder = new MediaRecorder(stream, {
-                    mimeType: 'video/webm;codecs=vp8,opus'
+                    mimeType: 'video/webm;codecs=vp8,opus',
+                    videoBitsPerSecond: 2500000, // 2.5 Mbps
+                    audioBitsPerSecond: 128000 // 128 kbps
                 });
 
                 mediaRecorder.ondataavailable = (e) => {
-                    if (e.data.size > 0) {
+                    if (e.data && e.data.size > 0) {
                         recordedChunks.push(e.data);
                     }
                 };
@@ -318,18 +325,26 @@
                 downloadButton.style.display = 'none';
                 recordingStatus.style.display = 'block';
                 switchCamera.disabled = true;
-                
+
             } catch (error) {
-                console.error('Error starting recording:', error);
-                alert('Error starting recording. Please try again.');
+                console.error('Recording error:', error);
+                alert('Failed to start recording. Please try again.');
+                isRecording = false;
+                startButton.style.display = 'block';
+                stopButton.style.display = 'none';
             }
         }
 
         function stopRecording() {
             if (mediaRecorder && isRecording) {
-                isRecording = false;
-                mediaRecorder.stop();
-                mediaRecorder = null;
+                try {
+                    isRecording = false;
+                    mediaRecorder.stop();
+                    mediaRecorder = null;
+                } catch (error) {
+                    console.error('Error stopping recording:', error);
+                    alert('Error stopping recording. Please refresh the page.');
+                }
             }
         }
 
@@ -339,20 +354,36 @@
                 return;
             }
 
-            const blob = new Blob(recordedChunks, { type: 'video/webm' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'hand-tracking-recording.webm';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            try {
+                const blob = new Blob(recordedChunks, { 
+                    type: 'video/webm;codecs=vp8,opus' 
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `hand-tracking-${new Date().toISOString()}.webm`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Download error:', error);
+                alert('Error downloading the recording. Please try again.');
+            }
         }
 
+        // Event listeners
         startButton.addEventListener('click', startRecording);
         stopButton.addEventListener('click', stopRecording);
         downloadButton.addEventListener('click', downloadRecording);
+        switchCamera.addEventListener('click', async () => {
+            if (isRecording) {
+                alert('Please stop recording before switching cameras');
+                return;
+            }
+            isFrontCamera = !isFrontCamera;
+            await setupCamera(isFrontCamera);
+        });
 
         // Initialize with back camera
         setupCamera(false);
