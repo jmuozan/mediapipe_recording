@@ -8,6 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
     <style>
+        /* Previous styles remain the same */
         body {
             font-family: system-ui, -apple-system, sans-serif;
             max-width: 800px;
@@ -30,17 +31,7 @@
             width: 100%;
             height: auto;
             aspect-ratio: 4/3;
-            transform: scaleX(-1);
-        }
-        
-        .front-camera #videoPreview, 
-        .front-camera #handCanvas {
-            transform: scaleX(-1);
-        }
-        
-        .back-camera #videoPreview, 
-        .back-camera #handCanvas {
-            transform: scaleX(1);
+            transform: scaleX(-1); /* Mirror the video */
         }
         
         #videoPreview {
@@ -65,14 +56,13 @@
         }
         
         button {
-            padding: 0.8rem 1.5rem;
+            padding: 0.5rem 1rem;
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 1.1rem;
+            font-size: 1rem;
             transition: background-color 0.2s;
-            min-width: 140px;
-            margin: 0.5rem;
+            min-width: 120px;
         }
         
         #startButton {
@@ -95,33 +85,37 @@
         #switchCamera {
             background: #9c27b0;
             color: white;
+            margin-bottom: 1rem;
+        }
+        
+        button:hover {
+            opacity: 0.9;
         }
         
         button:disabled {
             background: #ccc;
             cursor: not-allowed;
-            opacity: 0.7;
         }
 
         #recordingStatus {
             color: red;
             display: none;
             margin-top: 1rem;
-            font-weight: bold;
         }
 
         @media (max-width: 480px) {
             .button-container {
                 flex-direction: column;
+                gap: 0.5rem;
             }
+            
             button {
                 width: 100%;
-                margin: 0.3rem 0;
             }
         }
     </style>
 </head>
-<body class="back-camera">
+<body>
     <h1>Video Recorder with Hand Tracking</h1>
     <div class="video-container">
         <video id="videoPreview" autoplay muted playsinline></video>
@@ -143,7 +137,7 @@
         let recordedChunks = [];
         let isRecording = false;
         let currentStream = null;
-        let isFrontCamera = false; // Start with back camera
+        let isFrontCamera = true;
         
         const videoPreview = document.getElementById('videoPreview');
         const handCanvas = document.getElementById('handCanvas');
@@ -170,11 +164,8 @@
         function onResultsHands(results) {
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
-            
-            if (isFrontCamera) {
-                canvasCtx.scale(-1, 1);
-                canvasCtx.translate(-handCanvas.width, 0);
-            }
+            canvasCtx.scale(-1, 1); // Mirror the canvas drawing
+            canvasCtx.translate(-handCanvas.width, 0);
 
             if (results.multiHandLandmarks && results.multiHandedness) {
                 for (let index = 0; index < results.multiHandLandmarks.length; index++) {
@@ -197,8 +188,9 @@
 
         hands.onResults(onResultsHands);
 
-        async function setupCamera(useFrontCamera = false) {
+        async function setupCamera(useFrontCamera = true) {
             try {
+                // Stop any existing stream
                 if (currentStream) {
                     currentStream.getTracks().forEach(track => track.stop());
                 }
@@ -207,7 +199,7 @@
                     video: {
                         width: { ideal: 640 },
                         height: { ideal: 480 },
-                        facingMode: useFrontCamera ? "user" : { exact: "environment" }
+                        facingMode: useFrontCamera ? "user" : "environment"
                     },
                     audio: true
                 };
@@ -215,6 +207,7 @@
                 currentStream = await navigator.mediaDevices.getUserMedia(constraints);
                 videoPreview.srcObject = currentStream;
                 
+                // Wait for video to be ready
                 await new Promise((resolve) => {
                     videoPreview.onloadedmetadata = () => {
                         handCanvas.width = videoPreview.videoWidth;
@@ -222,14 +215,8 @@
                         resolve();
                     };
                 });
-
-                document.body.className = useFrontCamera ? 'front-camera' : 'back-camera';
                 
-                if (window.mediaPipeCamera) {
-                    window.mediaPipeCamera.stop();
-                }
-                
-                window.mediaPipeCamera = new Camera(videoPreview, {
+                const camera = new Camera(videoPreview, {
                     onFrame: async () => {
                         await hands.send({image: videoPreview});
                     },
@@ -237,7 +224,7 @@
                     height: handCanvas.height
                 });
                 
-                await window.mediaPipeCamera.start();
+                await camera.start();
                 
             } catch (error) {
                 console.error('Error accessing camera:', error);
@@ -245,6 +232,7 @@
             }
         }
 
+        // Switch camera function
         switchCamera.addEventListener('click', async () => {
             if (isRecording) {
                 alert('Please stop recording before switching cameras');
@@ -254,6 +242,7 @@
             await setupCamera(isFrontCamera);
         });
 
+        // Recording functions remain mostly the same
         function startRecording() {
             if (isRecording) return;
             
@@ -264,65 +253,50 @@
             
             function drawFrame() {
                 if (!isRecording) return;
-                
-                // Draw video
-                if (isFrontCamera) {
-                    ctx.save();
-                    ctx.scale(-1, 1);
-                    ctx.translate(-canvas.width, 0);
-                    ctx.drawImage(videoPreview, 0, 0);
-                    ctx.restore();
-                } else {
-                    ctx.drawImage(videoPreview, 0, 0);
-                }
-                
-                // Draw hand tracking
+                ctx.save();
+                ctx.scale(-1, 1);
+                ctx.translate(-canvas.width, 0);
+                ctx.drawImage(videoPreview, 0, 0);
+                ctx.restore();
                 ctx.drawImage(handCanvas, 0, 0);
-                
                 requestAnimationFrame(drawFrame);
             }
-
-            try {
-                const stream = canvas.captureStream(30);
-                const audioTrack = currentStream.getAudioTracks()[0];
-                if (audioTrack) {
-                    stream.addTrack(audioTrack);
-                }
-
-                recordedChunks = [];
-                mediaRecorder = new MediaRecorder(stream, {
-                    mimeType: 'video/webm;codecs=vp8,opus'
-                });
-
-                mediaRecorder.ondataavailable = (e) => {
-                    if (e.data.size > 0) {
-                        recordedChunks.push(e.data);
-                    }
-                };
-
-                mediaRecorder.onstop = () => {
-                    isRecording = false;
-                    startButton.style.display = 'block';
-                    stopButton.style.display = 'none';
-                    downloadButton.style.display = 'block';
-                    recordingStatus.style.display = 'none';
-                    switchCamera.disabled = false;
-                };
-
-                isRecording = true;
-                mediaRecorder.start(1000);
-                drawFrame();
-
-                startButton.style.display = 'none';
-                stopButton.style.display = 'block';
-                downloadButton.style.display = 'none';
-                recordingStatus.style.display = 'block';
-                switchCamera.disabled = true;
-                
-            } catch (error) {
-                console.error('Error starting recording:', error);
-                alert('Error starting recording. Please try again.');
+            
+            const stream = canvas.captureStream(30);
+            const audioTrack = currentStream.getAudioTracks()[0];
+            if (audioTrack) {
+                stream.addTrack(audioTrack);
             }
+
+            recordedChunks = [];
+            mediaRecorder = new MediaRecorder(stream, {
+                mimeType: 'video/webm;codecs=vp8,opus'
+            });
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    recordedChunks.push(e.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                isRecording = false;
+                startButton.style.display = 'block';
+                stopButton.style.display = 'none';
+                downloadButton.style.display = 'block';
+                recordingStatus.style.display = 'none';
+                switchCamera.disabled = false;
+            };
+
+            isRecording = true;
+            mediaRecorder.start();
+            drawFrame();
+
+            startButton.style.display = 'none';
+            stopButton.style.display = 'block';
+            downloadButton.style.display = 'none';
+            recordingStatus.style.display = 'block';
+            switchCamera.disabled = true;
         }
 
         function stopRecording() {
@@ -350,12 +324,13 @@
             URL.revokeObjectURL(url);
         }
 
+        // Event listeners
         startButton.addEventListener('click', startRecording);
         stopButton.addEventListener('click', stopRecording);
         downloadButton.addEventListener('click', downloadRecording);
 
-        // Initialize with back camera
-        setupCamera(false);
+        // Initialize with front camera
+        setupCamera(true);
     </script>
 </body>
 </html>
