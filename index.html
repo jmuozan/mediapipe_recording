@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html>
-<!-- Previous head section and styles remain the same... -->
 <head>
     <title>Hand Tracking Camera</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,7 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
     <style>
-        /* Previous styles remain the same */
         body {
             margin: 0;
             padding: 0;
@@ -72,6 +70,10 @@
             display: none;
         }
 
+        #switchCamera {
+            background-color: #4CAF50;
+        }
+
         .recording-dot {
             display: none;
             color: red;
@@ -92,6 +94,7 @@
         <canvas id="output_canvas"></canvas>
     </div>
     <div class="buttons">
+        <button id="switchCamera">Switch Camera</button>
         <button id="startRecord">Record</button>
         <button id="stopRecord">Stop</button>
         <button id="download">Download</button>
@@ -105,13 +108,14 @@
         const startRecordBtn = document.getElementById('startRecord');
         const stopRecordBtn = document.getElementById('stopRecord');
         const downloadBtn = document.getElementById('download');
+        const switchCameraBtn = document.getElementById('switchCamera');
         const recordingDot = document.querySelector('.recording-dot');
 
         let mediaRecorder = null;
         let recordedChunks = [];
         let stream = null;
+        let currentFacingMode = 'environment';
 
-        // Initialize MediaPipe Hands
         const hands = new Hands({
             locateFile: (file) => {
                 return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/${file}`;
@@ -127,8 +131,7 @@
 
         hands.onResults(onResults);
 
-        // Setup camera
-        async function setupCamera() {
+        async function setupCamera(facingMode = 'environment') {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
@@ -136,7 +139,7 @@
             const constraints = {
                 audio: true,
                 video: {
-                    facingMode: 'environment',
+                    facingMode: facingMode,
                     width: { ideal: 1920 },
                     height: { ideal: 1080 }
                 }
@@ -155,22 +158,7 @@
                 });
             } catch (err) {
                 console.error('Camera error:', err);
-                try {
-                    constraints.video.facingMode = { exact: 'environment' };
-                    stream = await navigator.mediaDevices.getUserMedia(constraints);
-                    video.srcObject = stream;
-
-                    return new Promise((resolve) => {
-                        video.onloadedmetadata = () => {
-                            canvas.width = video.videoWidth;
-                            canvas.height = video.videoHeight;
-                            resolve(video);
-                        };
-                    });
-                } catch (err2) {
-                    console.error('Both camera attempts failed:', err2);
-                    alert("Error accessing back camera: " + err2.message);
-                }
+                alert("Error accessing camera: " + err.message);
             }
         }
 
@@ -181,25 +169,22 @@
 
             if (results.multiHandLandmarks) {
                 for (const landmarks of results.multiHandLandmarks) {
-                    // Draw connections with thicker lines
                     drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
                         color: '#00FF00',
-                        lineWidth: 4  // Increased from 1 to 4
+                        lineWidth: 4
                     });
                     
-                    // Draw landmarks with larger radius and thicker outline
                     drawLandmarks(ctx, landmarks, {
-                        color: '#FF0000',        // Outline color
-                        fillColor: '#FFFFFF',    // Fill color
-                        lineWidth: 2,            // Outline thickness
-                        radius: 5                // Increased from 2 to 5
+                        color: '#FF0000',
+                        fillColor: '#FFFFFF',
+                        lineWidth: 2,
+                        radius: 5
                     });
                 }
             }
             ctx.restore();
         }
 
-        // Initialize
         async function init() {
             await setupCamera();
             const camera = new Camera(video, {
@@ -210,7 +195,11 @@
             camera.start();
         }
 
-        // Recording functions remain the same...
+        switchCameraBtn.onclick = async () => {
+            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+            await setupCamera(currentFacingMode);
+        };
+
         startRecordBtn.onclick = () => {
             if (!stream) return;
 
@@ -259,7 +248,6 @@
             URL.revokeObjectURL(url);
         };
 
-        // Start everything
         init();
     </script>
 </body>

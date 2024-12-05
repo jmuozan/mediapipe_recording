@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html>
-<!-- Previous head section and styles remain the same until the script -->
 <head>
     <title>Hand Tracking Camera</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -127,33 +126,22 @@
 
         hands.onResults(onResults);
 
-        // Get back camera
-        async function getBackCamera() {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const cameras = devices.filter(device => device.kind === 'videoinput');
-            // Usually, the back camera is the last one in the list
-            return cameras[cameras.length - 1].deviceId;
-        }
-
         // Setup camera
         async function setupCamera() {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
 
+            const constraints = {
+                audio: true,
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                }
+            };
+
             try {
-                // First get the back camera ID
-                const backCameraId = await getBackCamera();
-
-                const constraints = {
-                    video: {
-                        width: 640,
-                        height: 480,
-                        deviceId: { exact: backCameraId }
-                    },
-                    audio: true
-                };
-
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
 
@@ -165,8 +153,23 @@
                     };
                 });
             } catch (err) {
-                console.error(err);
-                alert("Error accessing camera: " + err.message);
+                console.error('Camera error:', err);
+                try {
+                    constraints.video.facingMode = { exact: 'environment' };
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    video.srcObject = stream;
+
+                    return new Promise((resolve) => {
+                        video.onloadedmetadata = () => {
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            resolve(video);
+                        };
+                    });
+                } catch (err2) {
+                    console.error('Both camera attempts failed:', err2);
+                    alert("Error accessing back camera: " + err2.message);
+                }
             }
         }
 
@@ -177,14 +180,18 @@
 
             if (results.multiHandLandmarks) {
                 for (const landmarks of results.multiHandLandmarks) {
+                    // Draw connections with thicker lines
                     drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
                         color: '#00FF00',
-                        lineWidth: 1
+                        lineWidth: 4  // Increased from 1 to 4
                     });
+                    
+                    // Draw landmarks with larger radius and thicker outline
                     drawLandmarks(ctx, landmarks, {
-                        color: '#FF0000',
-                        lineWidth: 1,
-                        radius: 2,
+                        color: '#FF0000',        // Outline color
+                        fillColor: '#FFFFFF',    // Fill color
+                        lineWidth: 2,            // Outline thickness
+                        radius: 5                // Increased from 2 to 5
                     });
                 }
             }
@@ -197,14 +204,12 @@
             const camera = new Camera(video, {
                 onFrame: async () => {
                     await hands.send({image: video});
-                },
-                width: 640,
-                height: 480
+                }
             });
             camera.start();
         }
 
-        // Recording functions remain the same
+        // Recording functions remain the same...
         startRecordBtn.onclick = () => {
             if (!stream) return;
 
