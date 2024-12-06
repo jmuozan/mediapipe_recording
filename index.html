@@ -1,283 +1,82 @@
 <!DOCTYPE html>
 <html>
-<!-- Previous head section remains identical -->
 <head>
-    <title>Hand Tracking Camera</title>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.1/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils@0.1/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
-    <!-- Previous styles remain identical -->
+    <title>Camera Switcher</title>
     <style>
         body {
             margin: 0;
-            padding: 0;
-            width: 100vw;
-            height: 100vh;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
+            background: #000;
         }
 
-        .container {
-            position: relative;
+        #videoElement {
             width: 100%;
-            max-width: 640px;
-            margin-top: 20px;
+            height: 100vh;
+            object-fit: cover;
         }
 
-        #input_video {
-            width: 100%;
-            height: auto;
-        }
-
-        canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-
-        .buttons {
-            margin-top: 20px;
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-            padding: 10px;
-        }
-
-        button {
-            padding: 10px 20px;
-            font-size: 16px;
-            cursor: pointer;
+        #switchButton {
+            position: fixed;
+            bottom: 20px;
+            padding: 15px 30px;
+            background: rgba(255, 255, 255, 0.3);
             border: none;
-            border-radius: 5px;
+            border-radius: 25px;
             color: white;
+            font-size: 16px;
+            backdrop-filter: blur(5px);
+            cursor: pointer;
         }
 
-        #startRecord {
-            background-color: #2196F3;
-        }
-
-        #stopRecord {
-            background-color: #f44336;
-            display: none;
-        }
-
-        #download {
-            background-color: #9C27B0;
-            display: none;
-        }
-
-        #switchCamera {
-            background-color: #4CAF50;
-        }
-
-        .recording-dot {
-            display: none;
-            color: red;
-            margin-top: 10px;
-            animation: blink 1s infinite;
-        }
-
-        @keyframes blink {
-            0% { opacity: 1; }
-            50% { opacity: 0; }
-            100% { opacity: 1; }
+        #switchButton:active {
+            background: rgba(255, 255, 255, 0.4);
         }
     </style>
 </head>
 <body>
-    <!-- Previous HTML structure remains identical -->
-    <div class="container">
-        <video id="input_video" playsinline></video>
-        <canvas id="output_canvas"></canvas>
-    </div>
-    <div class="buttons">
-        <button id="switchCamera">Switch Camera</button>
-        <button id="startRecord">Record</button>
-        <button id="stopRecord">Stop</button>
-        <button id="download">Download</button>
-    </div>
-    <div class="recording-dot">● Recording</div>
+    <video id="videoElement" autoplay playsinline></video>
+    <button id="switchButton">Switch Camera</button>
 
     <script>
-        const video = document.getElementById('input_video');
-        const canvas = document.getElementById('output_canvas');
-        const ctx = canvas.getContext('2d');
-        const startRecordBtn = document.getElementById('startRecord');
-        const stopRecordBtn = document.getElementById('stopRecord');
-        const downloadBtn = document.getElementById('download');
-        const switchCameraBtn = document.getElementById('switchCamera');
-        const recordingDot = document.querySelector('.recording-dot');
-
-        let mediaRecorder = null;
-        let recordedChunks = [];
-        let stream = null;
+        const video = document.getElementById('videoElement');
+        const switchButton = document.getElementById('switchButton');
         let currentFacingMode = 'environment';
-        let camera = null;
-
-        const hands = new Hands({
-            locateFile: (file) => {
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/${file}`;
-            }
-        });
-
-        hands.setOptions({
-            maxNumHands: 2,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
-
-        hands.onResults(onResults);
-
-        async function setupCamera(facingMode = 'environment') {
-            if (camera) {
-                camera.stop();
-            }
-            
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-            }
-
-            const constraints = {
-                audio: true,
-                video: {
-                    facingMode: { exact: facingMode },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
-                }
-            };
-
-            try {
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-                video.srcObject = stream;
-
-                return new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
-                        resolve(video);
-                    };
-                });
-            } catch (err) {
-                console.error('Camera error:', err);
-                // If exact constraint fails, try without exact
-                try {
-                    constraints.video.facingMode = facingMode;
-                    stream = await navigator.mediaDevices.getUserMedia(constraints);
-                    video.srcObject = stream;
-
-                    return new Promise((resolve) => {
-                        video.onloadedmetadata = () => {
-                            canvas.width = video.videoWidth;
-                            canvas.height = video.videoHeight;
-                            resolve(video);
-                        };
-                    });
-                } catch (err2) {
-                    console.error('Both camera attempts failed:', err2);
-                    alert("Error accessing camera: " + err2.message);
-                }
-            }
-        }
-
-        function onResults(results) {
-            ctx.save();
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-
-            if (results.multiHandLandmarks) {
-                for (const landmarks of results.multiHandLandmarks) {
-                    drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
-                        color: '#00FF00',
-                        lineWidth: 4
-                    });
-                    
-                    drawLandmarks(ctx, landmarks, {
-                        color: '#FF0000',
-                        fillColor: '#FFFFFF',
-                        lineWidth: 2,
-                        radius: 5
-                    });
-                }
-            }
-            ctx.restore();
-        }
 
         async function startCamera() {
-            await setupCamera(currentFacingMode);
-            camera = new Camera(video, {
-                onFrame: async () => {
-                    await hands.send({image: video});
-                }
-            });
-            camera.start();
-        }
-
-        async function init() {
-            await startCamera();
-        }
-
-        switchCameraBtn.onclick = async () => {
-            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-            await startCamera();
-        };
-
-        // Previous recording functions remain identical
-        startRecordBtn.onclick = () => {
-            if (!stream) return;
-
-            recordedChunks = [];
-            mediaRecorder = new MediaRecorder(stream);
-
-            mediaRecorder.ondataavailable = (e) => {
-                if (e.data.size > 0) {
-                    recordedChunks.push(e.data);
-                }
-            };
-
-            mediaRecorder.onstop = () => {
-                stopRecordBtn.style.display = 'none';
-                startRecordBtn.style.display = 'inline-block';
-                downloadBtn.style.display = 'inline-block';
-                recordingDot.style.display = 'none';
-            };
-
-            mediaRecorder.start();
-            startRecordBtn.style.display = 'none';
-            stopRecordBtn.style.display = 'inline-block';
-            downloadBtn.style.display = 'none';
-            recordingDot.style.display = 'block';
-        };
-
-        stopRecordBtn.onclick = () => {
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: currentFacingMode }
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                alert('Error accessing camera. Please make sure you have granted camera permissions.');
             }
-        };
+        }
 
-        downloadBtn.onclick = () => {
-            if (recordedChunks.length === 0) return;
-            
-            const blob = new Blob(recordedChunks, {
-                type: 'video/webm'
-            });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'hand-tracking.webm';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        };
+        async function switchCamera() {
+            // Stop current stream
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
 
-        init();
+            // Toggle facing mode
+            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+
+            // Start new stream
+            await startCamera();
+        }
+
+        // Start with back camera when page loads
+        startCamera();
+
+        // Add click event for switch button
+        switchButton.addEventListener('click', switchCamera);
     </script>
 </body>
 </html>
