@@ -1,15 +1,15 @@
 <!DOCTYPE html>
 <html>
+<!-- ... (head and styles remain the same) ... -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hand Detection with Camera Switching</title>
+    <title>Hand Detection with Camera Switching and Recording</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <style>
-        /* ... keeping same styles ... */
         body {
             margin: 0;
             padding: 0;
@@ -44,11 +44,17 @@
             transform: scaleX(-1);
         }
         
-        #switchButton {
+        .controls {
             position: fixed;
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+        }
+        
+        .button {
             padding: 15px 30px;
             background: rgba(255, 255, 255, 0.3);
             border: none;
@@ -57,7 +63,10 @@
             font-size: 16px;
             backdrop-filter: blur(5px);
             cursor: pointer;
-            z-index: 100;
+        }
+        
+        .button.recording {
+            background: rgba(255, 0, 0, 0.5);
         }
         
         #debugInfo {
@@ -79,19 +88,44 @@
         <video id="videoElement" autoplay playsinline muted></video>
         <canvas id="outputCanvas"></canvas>
     </div>
-    <button id="switchButton">Switch Camera</button>
+    <div class="controls">
+        <button id="switchButton" class="button">Switch Camera</button>
+        <button id="recordButton" class="button">Start Recording</button>
+    </div>
     <div id="debugInfo"></div>
 
     <script>
         const video = document.getElementById('videoElement');
         const outputCanvas = document.getElementById('outputCanvas');
         const switchButton = document.getElementById('switchButton');
+        const recordButton = document.getElementById('recordButton');
         const debugInfo = document.getElementById('debugInfo');
         const canvasCtx = outputCanvas.getContext('2d');
         let currentFacingMode = 'user';
         let cameraRunning = false;
         let currentStream = null;
         let mediaRecorder = null;
+        let recordedChunks = [];
+        let isRecording = false;
+
+        // Function to get supported MIME type
+        function getSupportedMimeType() {
+            const types = [
+                'video/webm',
+                'video/webm;codecs=vp8',
+                'video/webm;codecs=h264',
+                'video/mp4'
+            ];
+
+            for (const type of types) {
+                if (MediaRecorder.isTypeSupported(type)) {
+                    updateDebugInfo(`Using MIME type: ${type}`);
+                    return type;
+                }
+            }
+            
+            throw new Error('No supported MIME type found for MediaRecorder');
+        }
 
         function updateDebugInfo(message) {
             const timestamp = new Date().toLocaleTimeString();
@@ -150,14 +184,63 @@
             canvasCtx.restore();
         });
 
+        function startRecording() {
+            try {
+                recordedChunks = [];
+                const stream = outputCanvas.captureStream(30); // 30 FPS
+                const mimeType = getSupportedMimeType();
+                
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: mimeType,
+                    videoBitsPerSecond: 2500000 // 2.5 Mbps
+                });
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, {
+                        type: mimeType
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+                    a.download = `hand-detection-${new Date().toISOString()}.${extension}`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    updateDebugInfo('Recording saved');
+                };
+
+                mediaRecorder.start(1000); // Collect data every second
+                isRecording = true;
+                recordButton.textContent = 'Stop Recording';
+                recordButton.classList.add('recording');
+                updateDebugInfo('Recording started');
+            } catch (error) {
+                updateDebugInfo(`Recording error: ${error.message}`);
+                alert('Failed to start recording: ' + error.message);
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                isRecording = false;
+                recordButton.textContent = 'Start Recording';
+                recordButton.classList.remove('recording');
+            }
+        }
+
         async function setupCamera(facingMode) {
             try {
-                // Stop any existing stream
                 if (currentStream) {
                     currentStream.getTracks().forEach(track => track.stop());
                 }
 
-                // Get new stream
                 currentStream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         facingMode: facingMode,
@@ -166,18 +249,14 @@
                     }
                 });
 
-                // Set video source
                 video.srcObject = currentStream;
 
-                // Wait for video to be ready
                 await new Promise((resolve) => {
                     video.onloadedmetadata = () => resolve();
                 });
 
-                // Start video
                 await video.play();
 
-                // Setup MediaPipe processing
                 const processFrame = async () => {
                     if (currentStream.active) {
                         await hands.send({image: video});
@@ -208,7 +287,6 @@
                 await setupCamera(currentFacingMode);
             } catch (error) {
                 updateDebugInfo(`Switch camera error: ${error.message}`);
-                // Revert facing mode if switch failed
                 currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
             } finally {
                 switchButton.disabled = false;
@@ -217,7 +295,6 @@
 
         window.addEventListener('resize', updateCanvasSize);
 
-        // Initialize on user interaction
         document.addEventListener('click', () => {
             if (!cameraRunning) {
                 setupCamera(currentFacingMode);
@@ -225,6 +302,13 @@
         }, { once: true });
 
         switchButton.addEventListener('click', switchCamera);
+        recordButton.addEventListener('click', () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
 
         updateDebugInfo('Page loaded. Click anywhere to start camera.');
     </script>
