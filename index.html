@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+<!-- Previous head section and styles remain the same -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,6 +10,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <style>
+        /* Previous styles remain the same */
         body {
             margin: 0;
             padding: 0;
@@ -71,6 +73,17 @@
             max-height: 200px;
             overflow-y: auto;
         }
+
+        #currentMode {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            font-family: monospace;
+            z-index: 100;
+        }
     </style>
 </head>
 <body>
@@ -80,17 +93,21 @@
     </div>
     <button id="switchButton">Switch Camera</button>
     <div id="debugInfo"></div>
+    <div id="currentMode"></div>
 
     <script>
         const video = document.getElementById('videoElement');
         const outputCanvas = document.getElementById('outputCanvas');
         const switchButton = document.getElementById('switchButton');
         const debugInfo = document.getElementById('debugInfo');
+        const currentModeDisplay = document.getElementById('currentMode');
         const canvasCtx = outputCanvas.getContext('2d');
+        
         let currentFacingMode = 'user';
         let cameraRunning = false;
         let currentCamera = null;
         let switching = false;
+        let currentStream = null;
 
         function updateDebugInfo(message) {
             const timestamp = new Date().toLocaleTimeString();
@@ -99,6 +116,11 @@
             debugInfo.scrollTop = debugInfo.scrollHeight;
         }
 
+        function updateCurrentMode() {
+            currentModeDisplay.textContent = `Current mode: ${currentFacingMode}`;
+        }
+
+        // Canvas setup and hands initialization remain the same
         function updateCanvasSize() {
             outputCanvas.width = window.innerWidth;
             outputCanvas.height = window.innerHeight;
@@ -118,7 +140,10 @@
             minTrackingConfidence: 0.5
         });
 
+        // Previous hands.onResults remains the same
         hands.onResults((results) => {
+            if (switching) return;
+            
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
             canvasCtx.drawImage(results.image, 0, 0, outputCanvas.width, outputCanvas.height);
@@ -153,54 +178,68 @@
         async function stopCamera() {
             updateDebugInfo('Stopping camera...');
             
-            // Stop MediaPipe Camera utility
-            if (currentCamera) {
-                try {
+            try {
+                if (currentCamera) {
+                    updateDebugInfo('Stopping MediaPipe camera...');
                     await currentCamera.stop();
                     currentCamera = null;
-                } catch (err) {
-                    updateDebugInfo(`Error stopping camera utility: ${err.message}`);
                 }
-            }
-            
-            // Stop all tracks
-            if (video.srcObject) {
-                try {
-                    const tracks = video.srcObject.getTracks();
-                    tracks.forEach(track => {
+
+                if (currentStream) {
+                    updateDebugInfo('Stopping current stream...');
+                    currentStream.getTracks().forEach(track => {
                         track.stop();
                         updateDebugInfo(`Stopped track: ${track.kind}`);
                     });
-                    video.srcObject = null;
-                } catch (err) {
-                    updateDebugInfo(`Error stopping tracks: ${err.message}`);
+                    currentStream = null;
                 }
+
+                if (video.srcObject) {
+                    updateDebugInfo('Cleaning video element...');
+                    const tracks = video.srcObject.getTracks();
+                    tracks.forEach(track => {
+                        track.stop();
+                        updateDebugInfo(`Stopped video track: ${track.kind}`);
+                    });
+                    video.srcObject = null;
+                }
+
+                // Clear canvas
+                canvasCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+                
+                cameraRunning = false;
+                updateDebugInfo('Camera fully stopped');
+                
+                // Wait for everything to clean up
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+            } catch (err) {
+                updateDebugInfo(`Error in stopCamera: ${err.message}`);
             }
-            
-            cameraRunning = false;
-            updateDebugInfo('Camera fully stopped');
-            
-            // Small delay to ensure cleanup
-            await new Promise(resolve => setTimeout(resolve, 500));
         }
 
         async function startCamera() {
             try {
+                if (switching) {
+                    updateDebugInfo('Still switching, waiting...');
+                    return;
+                }
+
                 updateDebugInfo('Starting camera...');
+                updateDebugInfo(`Attempting to start with mode: ${currentFacingMode}`);
                 
                 const constraints = {
                     video: {
-                        facingMode: { exact: currentFacingMode },
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
+                        facingMode: { exact: currentFacingMode }
                     }
                 };
 
-                updateDebugInfo(`Requesting camera with facing mode: ${currentFacingMode}`);
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                updateDebugInfo('Requesting camera access...');
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
                 
-                // Ensure video element is ready
-                video.srcObject = stream;
+                video.srcObject = currentStream;
+                updateDebugInfo('Stream attached to video element');
+
                 await new Promise((resolve) => {
                     video.onloadedmetadata = () => {
                         updateDebugInfo('Video metadata loaded');
@@ -211,38 +250,34 @@
                 await video.play();
                 updateDebugInfo('Video playing');
 
-                // Create new Camera instance
-                currentCamera = new Camera(video, {
-                    onFrame: async () => {
-                        if (!switching) {
-                            await hands.send({image: video});
-                        }
-                    },
-                    width: 1280,
-                    height: 720
-                });
+                if (!switching) {
+                    currentCamera = new Camera(video, {
+                        onFrame: async () => {
+                            if (!switching) {
+                                await hands.send({image: video});
+                            }
+                        },
+                        width: 1280,
+                        height: 720
+                    });
 
-                await currentCamera.start();
-                updateDebugInfo('Camera started');
+                    await currentCamera.start();
+                    updateDebugInfo('MediaPipe camera started');
+                }
+
                 cameraRunning = true;
+                updateCurrentMode();
 
             } catch (err) {
-                updateDebugInfo(`Error: ${err.message}`);
-                // If exact constraint fails, try without it
+                updateDebugInfo(`Error in startCamera: ${err.message}`);
                 if (err.name === 'OverconstrainedError') {
+                    updateDebugInfo('Falling back to basic constraints');
                     try {
-                        const fallbackConstraints = {
-                            video: {
-                                facingMode: currentFacingMode,
-                                width: { ideal: 1280 },
-                                height: { ideal: 720 }
-                            }
-                        };
-                        updateDebugInfo('Trying fallback constraints...');
-                        const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
-                        video.srcObject = stream;
+                        currentStream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: currentFacingMode }
+                        });
+                        video.srcObject = currentStream;
                         await video.play();
-                        
                         currentCamera = new Camera(video, {
                             onFrame: async () => {
                                 if (!switching) {
@@ -252,34 +287,34 @@
                             width: 1280,
                             height: 720
                         });
-                        
                         await currentCamera.start();
                         cameraRunning = true;
-                        updateDebugInfo('Camera started with fallback mode');
+                        updateCurrentMode();
                     } catch (fallbackErr) {
                         updateDebugInfo(`Fallback error: ${fallbackErr.message}`);
-                        alert('Could not access camera');
+                        alert('Camera access failed');
                     }
-                } else {
-                    alert(`Camera error: ${err.message}`);
                 }
             }
         }
 
         async function switchCamera() {
-            if (switching) return;
-            
+            if (switching) {
+                updateDebugInfo('Already switching, please wait...');
+                return;
+            }
+
             switching = true;
             switchButton.disabled = true;
-            
             try {
-                updateDebugInfo('Switching camera...');
+                updateDebugInfo('Starting camera switch...');
                 await stopCamera();
                 currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+                updateDebugInfo(`Switched mode to: ${currentFacingMode}`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 await startCamera();
             } catch (err) {
                 updateDebugInfo(`Switch error: ${err.message}`);
-                alert('Error switching camera');
             } finally {
                 switching = false;
                 switchButton.disabled = false;
@@ -288,19 +323,22 @@
 
         window.addEventListener('resize', updateCanvasSize);
 
+        // Initialize on user interaction
         document.addEventListener('click', () => {
             if (!cameraRunning && !switching) {
                 startCamera();
             }
         }, { once: true });
 
-        switchButton.addEventListener('click', async () => {
+        switchButton.addEventListener('click', async (e) => {
+            e.preventDefault();
             if (!switching) {
                 await switchCamera();
             }
         });
 
         updateDebugInfo('Page loaded. Click anywhere to start camera.');
+        updateCurrentMode();
     </script>
 </body>
 </html>
