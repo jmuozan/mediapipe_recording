@@ -3,26 +3,51 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Camera Switcher</title>
+    <title>Hand Detection with Camera Switching</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <style>
         body {
             margin: 0;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
             background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
-
+        
+        .container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        
         #videoElement {
             width: 100%;
-            height: 100vh;
+            height: 100%;
             object-fit: cover;
+            transform: scaleX(-1);
         }
-
+        
+        #outputCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+        }
+        
         #switchButton {
             position: fixed;
             bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
             padding: 15px 30px;
             background: rgba(255, 255, 255, 0.3);
             border: none;
@@ -31,52 +56,178 @@
             font-size: 16px;
             backdrop-filter: blur(5px);
             cursor: pointer;
+            z-index: 100;
         }
-
-        #switchButton:active {
-            background: rgba(255, 255, 255, 0.4);
+        
+        #debugInfo {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            font-family: monospace;
+            z-index: 100;
         }
     </style>
 </head>
 <body>
-    <video id="videoElement" autoplay playsinline></video>
+    <div class="container">
+        <video id="videoElement" autoplay playsinline muted></video>
+        <canvas id="outputCanvas"></canvas>
+    </div>
     <button id="switchButton">Switch Camera</button>
+    <div id="debugInfo"></div>
 
     <script>
         const video = document.getElementById('videoElement');
+        const outputCanvas = document.getElementById('outputCanvas');
         const switchButton = document.getElementById('switchButton');
-        let currentFacingMode = 'environment';
+        const debugInfo = document.getElementById('debugInfo');
+        const canvasCtx = outputCanvas.getContext('2d');
+        let currentFacingMode = 'user'; // Start with front camera
+        let cameraRunning = false;
+
+        function updateDebugInfo(message) {
+            debugInfo.innerHTML += `${new Date().toLocaleTimeString()}: ${message}<br>`;
+            console.log(message);
+        }
+
+        // Set initial canvas size
+        function updateCanvasSize() {
+            outputCanvas.width = window.innerWidth;
+            outputCanvas.height = window.innerHeight;
+        }
+        updateCanvasSize();
+
+        // Initialize MediaPipe Hands
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults((results) => {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+            canvasCtx.drawImage(results.image, 0, 0, outputCanvas.width, outputCanvas.height);
+
+            if (results.multiHandLandmarks) {
+                for (let index = 0; index < results.multiHandLandmarks.length; index++) {
+                    const classification = results.multiHandedness[index];
+                    const isRightHand = classification.label === 'Right';
+                    const landmarks = results.multiHandLandmarks[index];
+                    
+                    drawConnectors(
+                        canvasCtx, 
+                        landmarks, 
+                        HAND_CONNECTIONS,
+                        {color: isRightHand ? '#00FF00' : '#FF0000'}
+                    );
+                    
+                    drawLandmarks(
+                        canvasCtx, 
+                        landmarks, 
+                        {
+                            color: isRightHand ? '#00FF00' : '#FF0000',
+                            fillColor: isRightHand ? '#FF0000' : '#00FF00',
+                            radius: 5
+                        }
+                    );
+                }
+            }
+            canvasCtx.restore();
+        });
 
         async function startCamera() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: currentFacingMode }
-                });
+                updateDebugInfo('Starting camera...');
+                
+                if (cameraRunning) {
+                    updateDebugInfo('Camera already running, stopping first...');
+                    await stopCamera();
+                }
+
+                const constraints = {
+                    video: {
+                        facingMode: currentFacingMode,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+
+                updateDebugInfo(`Requesting camera with facing mode: ${currentFacingMode}`);
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
+                
+                // Wait for video to be ready
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        updateDebugInfo('Video metadata loaded');
+                        resolve();
+                    };
+                });
+
+                await video.play();
+                updateDebugInfo('Video playing');
+
+                const camera = new Camera(video, {
+                    onFrame: async () => {
+                        await hands.send({image: video});
+                    },
+                    width: 1280,
+                    height: 720
+                });
+
+                await camera.start();
+                updateDebugInfo('Camera started');
+                cameraRunning = true;
+
             } catch (err) {
-                console.error('Error accessing camera:', err);
-                alert('Error accessing camera. Please make sure you have granted camera permissions.');
+                updateDebugInfo(`Error: ${err.message}`);
+                console.error('Camera error:', err);
+                alert('Camera error: ' + err.message);
+            }
+        }
+
+        async function stopCamera() {
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                cameraRunning = false;
+                updateDebugInfo('Camera stopped');
             }
         }
 
         async function switchCamera() {
-            // Stop current stream
-            if (video.srcObject) {
-                video.srcObject.getTracks().forEach(track => track.stop());
-            }
-
-            // Toggle facing mode
-            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-
-            // Start new stream
+            updateDebugInfo('Switching camera...');
+            await stopCamera();
+            currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
             await startCamera();
         }
 
-        // Start with back camera when page loads
-        startCamera();
+        // Handle window resize
+        window.addEventListener('resize', updateCanvasSize);
 
-        // Add click event for switch button
+        // Initialize camera on user interaction
+        document.addEventListener('click', () => {
+            if (!cameraRunning) {
+                startCamera();
+            }
+        }, { once: true });
+
+        // Add switch camera button listener
         switchButton.addEventListener('click', switchCamera);
+
+        // Initial debug info
+        updateDebugInfo('Page loaded. Click anywhere to start camera.');
     </script>
 </body>
 </html>
