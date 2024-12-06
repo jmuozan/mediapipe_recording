@@ -9,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <style>
+        /* ... keeping same styles ... */
         body {
             margin: 0;
             padding: 0;
@@ -89,11 +90,12 @@
         const canvasCtx = outputCanvas.getContext('2d');
         let currentFacingMode = 'user';
         let cameraRunning = false;
+        let currentStream = null;
+        let mediaRecorder = null;
 
         function updateDebugInfo(message) {
             const timestamp = new Date().toLocaleTimeString();
             debugInfo.innerHTML += `${timestamp}: ${message}<br>`;
-            console.log(`${timestamp}: ${message}`);
             debugInfo.scrollTop = debugInfo.scrollHeight;
         }
 
@@ -148,73 +150,66 @@
             canvasCtx.restore();
         });
 
-        let camera = null;
-
-        async function initCamera() {
-            updateDebugInfo(`Initializing camera with mode: ${currentFacingMode}`);
-            
+        async function setupCamera(facingMode) {
             try {
-                if (video.srcObject) {
-                    const tracks = video.srcObject.getTracks();
-                    tracks.forEach(track => track.stop());
-                }
-                
-                if (camera) {
-                    camera.stop();
+                // Stop any existing stream
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
                 }
 
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: currentFacingMode,
+                // Get new stream
+                currentStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: facingMode,
                         width: { ideal: 1280 },
                         height: { ideal: 720 }
                     }
                 });
 
-                video.srcObject = stream;
-                
-                camera = new Camera(video, {
-                    onFrame: async () => {
-                        await hands.send({image: video});
-                    },
-                    width: 1280,
-                    height: 720
+                // Set video source
+                video.srcObject = currentStream;
+
+                // Wait for video to be ready
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => resolve();
                 });
 
-                await camera.start();
+                // Start video
+                await video.play();
+
+                // Setup MediaPipe processing
+                const processFrame = async () => {
+                    if (currentStream.active) {
+                        await hands.send({image: video});
+                        requestAnimationFrame(processFrame);
+                    }
+                };
+
+                requestAnimationFrame(processFrame);
+
                 cameraRunning = true;
-                updateDebugInfo('Camera initialized successfully');
-                
+                updateDebugInfo(`Camera initialized with facing mode: ${facingMode}`);
+                return true;
+
             } catch (error) {
-                updateDebugInfo(`Camera initialization error: ${error.message}`);
-                cameraRunning = false;
+                updateDebugInfo(`Camera setup error: ${error.message}`);
+                return false;
             }
         }
 
         async function switchCamera() {
-            updateDebugInfo('Switching camera...');
-            switchButton.disabled = true;
+            if (switchButton.disabled) return;
             
+            switchButton.disabled = true;
+            updateDebugInfo('Switching camera...');
+
             try {
-                // Stop current camera
-                if (video.srcObject) {
-                    const tracks = video.srcObject.getTracks();
-                    tracks.forEach(track => track.stop());
-                }
-                
-                if (camera) {
-                    await camera.stop();
-                }
-                
-                // Toggle facing mode
                 currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-                updateDebugInfo(`New facing mode: ${currentFacingMode}`);
-                
-                // Initialize new camera
-                await initCamera();
-                
+                await setupCamera(currentFacingMode);
             } catch (error) {
                 updateDebugInfo(`Switch camera error: ${error.message}`);
+                // Revert facing mode if switch failed
+                currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
             } finally {
                 switchButton.disabled = false;
             }
@@ -225,7 +220,7 @@
         // Initialize on user interaction
         document.addEventListener('click', () => {
             if (!cameraRunning) {
-                initCamera();
+                setupCamera(currentFacingMode);
             }
         }, { once: true });
 
