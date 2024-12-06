@@ -113,7 +113,6 @@
 
         let mediaRecorder = null;
         let recordedChunks = [];
-        let stream = null;
         let currentFacingMode = 'environment';
 
         // Initialize MediaPipe Hands
@@ -132,84 +131,28 @@
 
         hands.onResults(onResults);
 
-        // Setup camera
-        async function setupCamera() {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-            }
-
-            const constraints = {
-                audio: true,
-                video: {
-                    facingMode: currentFacingMode,
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
-                }
-            };
-
+        // Simplified camera setup function
+        async function startCamera() {
             try {
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                const constraints = {
+                    audio: true,
+                    video: { 
+                        facingMode: currentFacingMode,
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                };
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
 
-                return new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
-                        resolve(video);
-                    };
-                });
-            } catch (err) {
-                console.error('Camera error:', err);
-                try {
-                    constraints.video.facingMode = { exact: currentFacingMode };
-                    stream = await navigator.mediaDevices.getUserMedia(constraints);
-                    video.srcObject = stream;
-
-                    return new Promise((resolve) => {
-                        video.onloadedmetadata = () => {
-                            canvas.width = video.videoWidth;
-                            canvas.height = video.videoHeight;
-                            resolve(video);
-                        };
-                    });
-                } catch (err2) {
-                    console.error('Both camera attempts failed:', err2);
-                    alert("Error accessing camera: " + err2.message);
-                }
-            }
-        }
-
-        async function switchCamera() {
-            // Stop current stream
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-            }
-            
-            // Toggle facing mode
-            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-            
-            // Update constraints with new facing mode
-            const constraints = {
-                audio: true,
-                video: {
-                    facingMode: currentFacingMode,
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
-                }
-            };
-
-            try {
-                // Get new stream
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-                video.srcObject = stream;
-                
-                // Update canvas dimensions for new stream
+                // Set up canvas dimensions once metadata is loaded
                 video.onloadedmetadata = () => {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
                 };
 
-                // Reinitialize MediaPipe camera
+                // Initialize MediaPipe camera
                 const camera = new Camera(video, {
                     onFrame: async () => {
                         await hands.send({image: video});
@@ -217,30 +160,49 @@
                 });
                 camera.start();
 
-                // If we were recording, set up new MediaRecorder
-                if (mediaRecorder && mediaRecorder.state === 'recording') {
-                    recordedChunks = [];
-                    mediaRecorder = new MediaRecorder(stream);
-                    
-                    mediaRecorder.ondataavailable = (e) => {
-                        if (e.data.size > 0) {
-                            recordedChunks.push(e.data);
-                        }
-                    };
-
-                    mediaRecorder.onstop = () => {
-                        stopRecordBtn.style.display = 'none';
-                        startRecordBtn.style.display = 'inline-block';
-                        downloadBtn.style.display = 'inline-block';
-                        recordingDot.style.display = 'none';
-                    };
-
-                    mediaRecorder.start();
-                }
-
+                return stream;
             } catch (err) {
-                console.error('Error switching camera:', err);
-                alert("Error switching camera: " + err.message);
+                console.error('Camera error:', err);
+                alert("Error accessing camera: " + err.message);
+            }
+        }
+
+        // Simplified camera switching function
+        async function switchCamera() {
+            // Stop current stream if it exists
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+
+            // Toggle facing mode
+            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+
+            // Start new stream
+            const newStream = await startCamera();
+
+            // Handle recording state
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                // Stop current recording
+                mediaRecorder.stop();
+                
+                // Start new recording with new stream
+                recordedChunks = [];
+                mediaRecorder = new MediaRecorder(newStream);
+                
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) {
+                        recordedChunks.push(e.data);
+                    }
+                };
+
+                mediaRecorder.onstop = () => {
+                    stopRecordBtn.style.display = 'none';
+                    startRecordBtn.style.display = 'inline-block';
+                    downloadBtn.style.display = 'inline-block';
+                    recordingDot.style.display = 'none';
+                };
+
+                mediaRecorder.start();
             }
         }
 
@@ -251,13 +213,11 @@
 
             if (results.multiHandLandmarks) {
                 for (const landmarks of results.multiHandLandmarks) {
-                    // Draw connections with thicker lines
                     drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
                         color: '#00FF00',
                         lineWidth: 4
                     });
                     
-                    // Draw landmarks with larger radius and thicker outline
                     drawLandmarks(ctx, landmarks, {
                         color: '#FF0000',
                         fillColor: '#FFFFFF',
@@ -269,19 +229,9 @@
             ctx.restore();
         }
 
-        // Initialize
-        async function init() {
-            await setupCamera();
-            const camera = new Camera(video, {
-                onFrame: async () => {
-                    await hands.send({image: video});
-                }
-            });
-            camera.start();
-        }
-
         // Recording functions
         startRecordBtn.onclick = () => {
+            const stream = video.srcObject;
             if (!stream) return;
 
             recordedChunks = [];
@@ -329,10 +279,11 @@
             URL.revokeObjectURL(url);
         };
 
-        switchCameraBtn.onclick = switchCamera;
+        // Add click event for switch button
+        switchCameraBtn.addEventListener('click', switchCamera);
 
-        // Start everything
-        init();
+        // Start with back camera when page loads
+        startCamera();
     </script>
 </body>
 </html>
