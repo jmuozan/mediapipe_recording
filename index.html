@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+<!-- Previous code remains the same until the script section -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -87,9 +88,10 @@
         const switchButton = document.getElementById('switchButton');
         const debugInfo = document.getElementById('debugInfo');
         const canvasCtx = outputCanvas.getContext('2d');
-        let currentFacingMode = 'user';
+        let currentFacingMode = 'environment';  // Changed to start with back camera
         let cameraRunning = false;
 
+        // Rest of the code remains exactly the same...
         function updateDebugInfo(message) {
             const timestamp = new Date().toLocaleTimeString();
             debugInfo.innerHTML += `${timestamp}: ${message}<br>`;
