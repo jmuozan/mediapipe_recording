@@ -1,82 +1,265 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
+    <title>Hand Tracking Camera</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Camera Switcher</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.1/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils@0.1/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
     <style>
+        /* Previous styles remain the same */
         body {
             margin: 0;
-            min-height: 100vh;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
-            background: #000;
         }
 
-        #videoElement {
+        .container {
+            position: relative;
             width: 100%;
-            height: 100vh;
-            object-fit: cover;
+            max-width: 640px;
+            margin-top: 20px;
         }
 
-        #switchButton {
-            position: fixed;
-            bottom: 20px;
-            padding: 15px 30px;
-            background: rgba(255, 255, 255, 0.3);
-            border: none;
-            border-radius: 25px;
-            color: white;
+        #input_video {
+            width: 100%;
+            height: auto;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .buttons {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            padding: 10px;
+        }
+
+        button {
+            padding: 10px 20px;
             font-size: 16px;
-            backdrop-filter: blur(5px);
             cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            color: white;
         }
 
-        #switchButton:active {
-            background: rgba(255, 255, 255, 0.4);
+        #startRecord {
+            background-color: #2196F3;
+        }
+
+        #stopRecord {
+            background-color: #f44336;
+            display: none;
+        }
+
+        #download {
+            background-color: #9C27B0;
+            display: none;
+        }
+
+        .recording-dot {
+            display: none;
+            color: red;
+            margin-top: 10px;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0; }
+            100% { opacity: 1; }
         }
     </style>
 </head>
 <body>
-    <video id="videoElement" autoplay playsinline></video>
-    <button id="switchButton">Switch Camera</button>
+    <div class="container">
+        <video id="input_video" playsinline></video>
+        <canvas id="output_canvas"></canvas>
+    </div>
+    <div class="buttons">
+        <button id="startRecord">Record</button>
+        <button id="stopRecord">Stop</button>
+        <button id="download">Download</button>
+    </div>
+    <div class="recording-dot">● Recording</div>
 
     <script>
-        const video = document.getElementById('videoElement');
-        const switchButton = document.getElementById('switchButton');
-        let currentFacingMode = 'environment';
+        const video = document.getElementById('input_video');
+        const canvas = document.getElementById('output_canvas');
+        const ctx = canvas.getContext('2d');
+        const startRecordBtn = document.getElementById('startRecord');
+        const stopRecordBtn = document.getElementById('stopRecord');
+        const downloadBtn = document.getElementById('download');
+        const recordingDot = document.querySelector('.recording-dot');
 
-        async function startCamera() {
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let stream = null;
+
+        // Initialize MediaPipe Hands
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        // Setup camera
+        async function setupCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+
+            const constraints = {
+                audio: true,
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                }
+            };
+
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: currentFacingMode }
-                });
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
+
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        resolve(video);
+                    };
+                });
             } catch (err) {
-                console.error('Error accessing camera:', err);
-                alert('Error accessing camera. Please make sure you have granted camera permissions.');
+                console.error('Camera error:', err);
+                try {
+                    constraints.video.facingMode = { exact: 'environment' };
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    video.srcObject = stream;
+
+                    return new Promise((resolve) => {
+                        video.onloadedmetadata = () => {
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            resolve(video);
+                        };
+                    });
+                } catch (err2) {
+                    console.error('Both camera attempts failed:', err2);
+                    alert("Error accessing back camera: " + err2.message);
+                }
             }
         }
 
-        async function switchCamera() {
-            // Stop current stream
-            if (video.srcObject) {
-                video.srcObject.getTracks().forEach(track => track.stop());
+        function onResults(results) {
+            ctx.save();
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    // Draw connections with thicker lines
+                    drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
+                        color: '#00FF00',
+                        lineWidth: 4  // Increased from 1 to 4
+                    });
+                    
+                    // Draw landmarks with larger radius and thicker outline
+                    drawLandmarks(ctx, landmarks, {
+                        color: '#FF0000',        // Outline color
+                        fillColor: '#FFFFFF',    // Fill color
+                        lineWidth: 2,            // Outline thickness
+                        radius: 5                // Increased from 2 to 5
+                    });
+                }
             }
-
-            // Toggle facing mode
-            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-
-            // Start new stream
-            await startCamera();
+            ctx.restore();
         }
 
-        // Start with back camera when page loads
-        startCamera();
+        // Initialize
+        async function init() {
+            await setupCamera();
+            const camera = new Camera(video, {
+                onFrame: async () => {
+                    await hands.send({image: video});
+                }
+            });
+            camera.start();
+        }
 
-        // Add click event for switch button
-        switchButton.addEventListener('click', switchCamera);
+        // Recording functions remain the same...
+        startRecordBtn.onclick = () => {
+            if (!stream) return;
+
+            recordedChunks = [];
+            mediaRecorder = new MediaRecorder(stream);
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    recordedChunks.push(e.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                stopRecordBtn.style.display = 'none';
+                startRecordBtn.style.display = 'inline-block';
+                downloadBtn.style.display = 'inline-block';
+                recordingDot.style.display = 'none';
+            };
+
+            mediaRecorder.start();
+            startRecordBtn.style.display = 'none';
+            stopRecordBtn.style.display = 'inline-block';
+            downloadBtn.style.display = 'none';
+            recordingDot.style.display = 'block';
+        };
+
+        stopRecordBtn.onclick = () => {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        };
+
+        downloadBtn.onclick = () => {
+            if (recordedChunks.length === 0) return;
+            
+            const blob = new Blob(recordedChunks, {
+                type: 'video/webm'
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'hand-tracking.webm';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
+
+        // Start everything
+        init();
     </script>
 </body>
 </html>
