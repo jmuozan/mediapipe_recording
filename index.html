@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html>
-<!-- ... (head and styles remain the same) ... -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -32,6 +31,9 @@
             width: 100%;
             height: 100%;
             object-fit: cover;
+        }
+        
+        #videoElement.mirror {
             transform: scaleX(-1);
         }
         
@@ -41,6 +43,9 @@
             left: 0;
             width: 100%;
             height: 100%;
+        }
+        
+        #outputCanvas.mirror {
             transform: scaleX(-1);
         }
         
@@ -85,8 +90,8 @@
 </head>
 <body>
     <div class="container">
-        <video id="videoElement" autoplay playsinline muted></video>
-        <canvas id="outputCanvas"></canvas>
+        <video id="videoElement" class="mirror" autoplay playsinline muted></video>
+        <canvas id="outputCanvas" class="mirror"></canvas>
     </div>
     <div class="controls">
         <button id="switchButton" class="button">Switch Camera</button>
@@ -108,7 +113,14 @@
         let recordedChunks = [];
         let isRecording = false;
 
-        // Function to get supported MIME type
+        function updateMirrorEffect(facingMode) {
+            const shouldMirror = facingMode === 'user';
+            video.classList.toggle('mirror', shouldMirror);
+            outputCanvas.classList.toggle('mirror', shouldMirror);
+            updateDebugInfo(`Mirror effect: ${shouldMirror ? 'enabled' : 'disabled'}`);
+        }
+
+        // Rest of the functions remain the same as in your original code
         function getSupportedMimeType() {
             const types = [
                 'video/webm',
@@ -187,12 +199,12 @@
         function startRecording() {
             try {
                 recordedChunks = [];
-                const stream = outputCanvas.captureStream(30); // 30 FPS
+                const stream = outputCanvas.captureStream(30);
                 const mimeType = getSupportedMimeType();
                 
                 mediaRecorder = new MediaRecorder(stream, {
                     mimeType: mimeType,
-                    videoBitsPerSecond: 2500000 // 2.5 Mbps
+                    videoBitsPerSecond: 2500000
                 });
 
                 mediaRecorder.ondataavailable = (event) => {
@@ -215,7 +227,7 @@
                     updateDebugInfo('Recording saved');
                 };
 
-                mediaRecorder.start(1000); // Collect data every second
+                mediaRecorder.start(1000);
                 isRecording = true;
                 recordButton.textContent = 'Stop Recording';
                 recordButton.classList.add('recording');
@@ -250,6 +262,7 @@
                 });
 
                 video.srcObject = currentStream;
+                updateMirrorEffect(facingMode);
 
                 await new Promise((resolve) => {
                     video.onloadedmetadata = () => resolve();
