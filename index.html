@@ -68,6 +68,8 @@
             padding: 10px;
             font-family: monospace;
             z-index: 100;
+            max-height: 200px;
+            overflow-y: auto;
         }
     </style>
 </head>
@@ -85,28 +87,24 @@
         const switchButton = document.getElementById('switchButton');
         const debugInfo = document.getElementById('debugInfo');
         const canvasCtx = outputCanvas.getContext('2d');
-        let currentFacingMode = 'user'; // Start with front camera
+        let currentFacingMode = 'user';
         let cameraRunning = false;
         let currentCamera = null;
+        let switching = false;
 
         function updateDebugInfo(message) {
-            debugInfo.innerHTML += `${new Date().toLocaleTimeString()}: ${message}<br>`;
-            console.log(message);
-            // Keep only last 10 messages
-            const lines = debugInfo.innerHTML.split('<br>');
-            if (lines.length > 10) {
-                debugInfo.innerHTML = lines.slice(-10).join('<br>');
-            }
+            const timestamp = new Date().toLocaleTimeString();
+            debugInfo.innerHTML += `${timestamp}: ${message}<br>`;
+            console.log(`${timestamp}: ${message}`);
+            debugInfo.scrollTop = debugInfo.scrollHeight;
         }
 
-        // Set initial canvas size
         function updateCanvasSize() {
             outputCanvas.width = window.innerWidth;
             outputCanvas.height = window.innerHeight;
         }
         updateCanvasSize();
 
-        // Initialize MediaPipe Hands
         const hands = new Hands({
             locateFile: (file) => {
                 return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
@@ -154,24 +152,42 @@
 
         async function stopCamera() {
             updateDebugInfo('Stopping camera...');
+            
+            // Stop MediaPipe Camera utility
             if (currentCamera) {
-                await currentCamera.stop();
-                currentCamera = null;
+                try {
+                    await currentCamera.stop();
+                    currentCamera = null;
+                } catch (err) {
+                    updateDebugInfo(`Error stopping camera utility: ${err.message}`);
+                }
             }
+            
+            // Stop all tracks
             if (video.srcObject) {
-                const tracks = video.srcObject.getTracks();
-                tracks.forEach(track => track.stop());
-                video.srcObject = null;
+                try {
+                    const tracks = video.srcObject.getTracks();
+                    tracks.forEach(track => {
+                        track.stop();
+                        updateDebugInfo(`Stopped track: ${track.kind}`);
+                    });
+                    video.srcObject = null;
+                } catch (err) {
+                    updateDebugInfo(`Error stopping tracks: ${err.message}`);
+                }
             }
+            
             cameraRunning = false;
-            updateDebugInfo('Camera stopped');
+            updateDebugInfo('Camera fully stopped');
+            
+            // Small delay to ensure cleanup
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
 
         async function startCamera() {
             try {
                 updateDebugInfo('Starting camera...');
-                await stopCamera(); // Ensure previous camera is stopped
-
+                
                 const constraints = {
                     video: {
                         facingMode: { exact: currentFacingMode },
@@ -182,18 +198,25 @@
 
                 updateDebugInfo(`Requesting camera with facing mode: ${currentFacingMode}`);
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                video.srcObject = stream;
                 
+                // Ensure video element is ready
+                video.srcObject = stream;
                 await new Promise((resolve) => {
-                    video.onloadedmetadata = resolve;
+                    video.onloadedmetadata = () => {
+                        updateDebugInfo('Video metadata loaded');
+                        resolve();
+                    };
                 });
 
                 await video.play();
                 updateDebugInfo('Video playing');
 
+                // Create new Camera instance
                 currentCamera = new Camera(video, {
                     onFrame: async () => {
-                        await hands.send({image: video});
+                        if (!switching) {
+                            await hands.send({image: video});
+                        }
                     },
                     width: 1280,
                     height: 720
@@ -205,9 +228,8 @@
 
             } catch (err) {
                 updateDebugInfo(`Error: ${err.message}`);
-                console.error('Camera error:', err);
-                // If exact facing mode fails, try without exact constraint
-                if (err.message.includes('exact')) {
+                // If exact constraint fails, try without it
+                if (err.name === 'OverconstrainedError') {
                     try {
                         const fallbackConstraints = {
                             video: {
@@ -216,53 +238,68 @@
                                 height: { ideal: 720 }
                             }
                         };
-                        updateDebugInfo('Trying fallback camera mode...');
+                        updateDebugInfo('Trying fallback constraints...');
                         const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
                         video.srcObject = stream;
                         await video.play();
+                        
                         currentCamera = new Camera(video, {
                             onFrame: async () => {
-                                await hands.send({image: video});
+                                if (!switching) {
+                                    await hands.send({image: video});
+                                }
                             },
                             width: 1280,
                             height: 720
                         });
+                        
                         await currentCamera.start();
                         cameraRunning = true;
                         updateDebugInfo('Camera started with fallback mode');
                     } catch (fallbackErr) {
                         updateDebugInfo(`Fallback error: ${fallbackErr.message}`);
-                        alert('Could not access camera. Please ensure camera permissions are granted.');
+                        alert('Could not access camera');
                     }
                 } else {
-                    alert('Camera error: ' + err.message);
+                    alert(`Camera error: ${err.message}`);
                 }
             }
         }
 
         async function switchCamera() {
-            switchButton.disabled = true; // Prevent multiple clicks
-            updateDebugInfo('Switching camera...');
-            await stopCamera();
-            currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-            await startCamera();
-            switchButton.disabled = false;
+            if (switching) return;
+            
+            switching = true;
+            switchButton.disabled = true;
+            
+            try {
+                updateDebugInfo('Switching camera...');
+                await stopCamera();
+                currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+                await startCamera();
+            } catch (err) {
+                updateDebugInfo(`Switch error: ${err.message}`);
+                alert('Error switching camera');
+            } finally {
+                switching = false;
+                switchButton.disabled = false;
+            }
         }
 
-        // Handle window resize
         window.addEventListener('resize', updateCanvasSize);
 
-        // Initialize camera on user interaction
         document.addEventListener('click', () => {
-            if (!cameraRunning) {
+            if (!cameraRunning && !switching) {
                 startCamera();
             }
         }, { once: true });
 
-        // Add switch camera button listener
-        switchButton.addEventListener('click', switchCamera);
+        switchButton.addEventListener('click', async () => {
+            if (!switching) {
+                await switchCamera();
+            }
+        });
 
-        // Initial debug info
         updateDebugInfo('Page loaded. Click anywhere to start camera.');
     </script>
 </body>
