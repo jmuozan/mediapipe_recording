@@ -8,7 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.2/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.1/hands.js" crossorigin="anonymous"></script>
     <style>
-        /* Previous styles remain the same */
         body {
             margin: 0;
             padding: 0;
@@ -71,6 +70,10 @@
             display: none;
         }
 
+        #switchCamera {
+            background-color: #4CAF50;
+        }
+
         .recording-dot {
             display: none;
             color: red;
@@ -94,6 +97,7 @@
         <button id="startRecord">Record</button>
         <button id="stopRecord">Stop</button>
         <button id="download">Download</button>
+        <button id="switchCamera">Switch Camera</button>
     </div>
     <div class="recording-dot">● Recording</div>
 
@@ -104,11 +108,13 @@
         const startRecordBtn = document.getElementById('startRecord');
         const stopRecordBtn = document.getElementById('stopRecord');
         const downloadBtn = document.getElementById('download');
+        const switchCameraBtn = document.getElementById('switchCamera');
         const recordingDot = document.querySelector('.recording-dot');
 
         let mediaRecorder = null;
         let recordedChunks = [];
         let stream = null;
+        let currentFacingMode = 'environment';
 
         // Initialize MediaPipe Hands
         const hands = new Hands({
@@ -135,7 +141,7 @@
             const constraints = {
                 audio: true,
                 video: {
-                    facingMode: 'environment',
+                    facingMode: currentFacingMode,
                     width: { ideal: 1920 },
                     height: { ideal: 1080 }
                 }
@@ -155,7 +161,7 @@
             } catch (err) {
                 console.error('Camera error:', err);
                 try {
-                    constraints.video.facingMode = { exact: 'environment' };
+                    constraints.video.facingMode = { exact: currentFacingMode };
                     stream = await navigator.mediaDevices.getUserMedia(constraints);
                     video.srcObject = stream;
 
@@ -168,8 +174,73 @@
                     });
                 } catch (err2) {
                     console.error('Both camera attempts failed:', err2);
-                    alert("Error accessing back camera: " + err2.message);
+                    alert("Error accessing camera: " + err2.message);
                 }
+            }
+        }
+
+        async function switchCamera() {
+            // Stop current stream
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            
+            // Toggle facing mode
+            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+            
+            // Update constraints with new facing mode
+            const constraints = {
+                audio: true,
+                video: {
+                    facingMode: currentFacingMode,
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                }
+            };
+
+            try {
+                // Get new stream
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                
+                // Update canvas dimensions for new stream
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                };
+
+                // Reinitialize MediaPipe camera
+                const camera = new Camera(video, {
+                    onFrame: async () => {
+                        await hands.send({image: video});
+                    }
+                });
+                camera.start();
+
+                // If we were recording, set up new MediaRecorder
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    recordedChunks = [];
+                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) {
+                            recordedChunks.push(e.data);
+                        }
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        stopRecordBtn.style.display = 'none';
+                        startRecordBtn.style.display = 'inline-block';
+                        downloadBtn.style.display = 'inline-block';
+                        recordingDot.style.display = 'none';
+                    };
+
+                    mediaRecorder.start();
+                }
+
+            } catch (err) {
+                console.error('Error switching camera:', err);
+                alert("Error switching camera: " + err.message);
             }
         }
 
@@ -183,15 +254,15 @@
                     // Draw connections with thicker lines
                     drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
                         color: '#00FF00',
-                        lineWidth: 4  // Increased from 1 to 4
+                        lineWidth: 4
                     });
                     
                     // Draw landmarks with larger radius and thicker outline
                     drawLandmarks(ctx, landmarks, {
-                        color: '#FF0000',        // Outline color
-                        fillColor: '#FFFFFF',    // Fill color
-                        lineWidth: 2,            // Outline thickness
-                        radius: 5                // Increased from 2 to 5
+                        color: '#FF0000',
+                        fillColor: '#FFFFFF',
+                        lineWidth: 2,
+                        radius: 5
                     });
                 }
             }
@@ -209,7 +280,7 @@
             camera.start();
         }
 
-        // Recording functions remain the same...
+        // Recording functions
         startRecordBtn.onclick = () => {
             if (!stream) return;
 
@@ -257,6 +328,8 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         };
+
+        switchCameraBtn.onclick = switchCamera;
 
         // Start everything
         init();
