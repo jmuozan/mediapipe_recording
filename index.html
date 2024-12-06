@@ -87,10 +87,16 @@
         const canvasCtx = outputCanvas.getContext('2d');
         let currentFacingMode = 'user'; // Start with front camera
         let cameraRunning = false;
+        let currentCamera = null;
 
         function updateDebugInfo(message) {
             debugInfo.innerHTML += `${new Date().toLocaleTimeString()}: ${message}<br>`;
             console.log(message);
+            // Keep only last 10 messages
+            const lines = debugInfo.innerHTML.split('<br>');
+            if (lines.length > 10) {
+                debugInfo.innerHTML = lines.slice(-10).join('<br>');
+            }
         }
 
         // Set initial canvas size
@@ -146,18 +152,29 @@
             canvasCtx.restore();
         });
 
+        async function stopCamera() {
+            updateDebugInfo('Stopping camera...');
+            if (currentCamera) {
+                await currentCamera.stop();
+                currentCamera = null;
+            }
+            if (video.srcObject) {
+                const tracks = video.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            cameraRunning = false;
+            updateDebugInfo('Camera stopped');
+        }
+
         async function startCamera() {
             try {
                 updateDebugInfo('Starting camera...');
-                
-                if (cameraRunning) {
-                    updateDebugInfo('Camera already running, stopping first...');
-                    await stopCamera();
-                }
+                await stopCamera(); // Ensure previous camera is stopped
 
                 const constraints = {
                     video: {
-                        facingMode: currentFacingMode,
+                        facingMode: { exact: currentFacingMode },
                         width: { ideal: 1280 },
                         height: { ideal: 720 }
                     }
@@ -167,18 +184,14 @@
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
                 
-                // Wait for video to be ready
                 await new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        updateDebugInfo('Video metadata loaded');
-                        resolve();
-                    };
+                    video.onloadedmetadata = resolve;
                 });
 
                 await video.play();
                 updateDebugInfo('Video playing');
 
-                const camera = new Camera(video, {
+                currentCamera = new Camera(video, {
                     onFrame: async () => {
                         await hands.send({image: video});
                     },
@@ -186,31 +199,54 @@
                     height: 720
                 });
 
-                await camera.start();
+                await currentCamera.start();
                 updateDebugInfo('Camera started');
                 cameraRunning = true;
 
             } catch (err) {
                 updateDebugInfo(`Error: ${err.message}`);
                 console.error('Camera error:', err);
-                alert('Camera error: ' + err.message);
-            }
-        }
-
-        async function stopCamera() {
-            if (video.srcObject) {
-                video.srcObject.getTracks().forEach(track => track.stop());
-                video.srcObject = null;
-                cameraRunning = false;
-                updateDebugInfo('Camera stopped');
+                // If exact facing mode fails, try without exact constraint
+                if (err.message.includes('exact')) {
+                    try {
+                        const fallbackConstraints = {
+                            video: {
+                                facingMode: currentFacingMode,
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 }
+                            }
+                        };
+                        updateDebugInfo('Trying fallback camera mode...');
+                        const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+                        video.srcObject = stream;
+                        await video.play();
+                        currentCamera = new Camera(video, {
+                            onFrame: async () => {
+                                await hands.send({image: video});
+                            },
+                            width: 1280,
+                            height: 720
+                        });
+                        await currentCamera.start();
+                        cameraRunning = true;
+                        updateDebugInfo('Camera started with fallback mode');
+                    } catch (fallbackErr) {
+                        updateDebugInfo(`Fallback error: ${fallbackErr.message}`);
+                        alert('Could not access camera. Please ensure camera permissions are granted.');
+                    }
+                } else {
+                    alert('Camera error: ' + err.message);
+                }
             }
         }
 
         async function switchCamera() {
+            switchButton.disabled = true; // Prevent multiple clicks
             updateDebugInfo('Switching camera...');
             await stopCamera();
             currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
             await startCamera();
+            switchButton.disabled = false;
         }
 
         // Handle window resize
